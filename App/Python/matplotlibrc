@@ -1,0 +1,19 @@
+# Chalk-on-slate look for figures produced on the board
+figure.facecolor: 26332c
+axes.facecolor: 26332c
+savefig.facecolor: 26332c
+axes.edgecolor: e8e6dc
+axes.labelcolor: f1efe6
+axes.titlecolor: f6e08a
+xtick.color: e8e6dc
+ytick.color: e8e6dc
+text.color: f1efe6
+grid.color: 5d6b63
+legend.facecolor: 26332c
+legend.edgecolor: 7c8a82
+axes.prop_cycle: cycler('color', ['f1efe6', 'f6e08a', 'f3a5b5', '9ccfee', 'b9e4a0', 'f5c38c'])
+font.family: sans-serif
+font.sans-serif: Chalkboard SE, Chalkboard, Noteworthy, DejaVu Sans
+font.size: 12
+lines.linewidth: 2.0
+figure.figsize: 6.4, 3.8

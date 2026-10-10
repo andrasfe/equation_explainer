@@ -73,6 +73,10 @@ struct BoardCommands: Commands {
             Button("Write on the Board") { model.web.command("focus") }
                 .keyboardShortcut("l", modifiers: .command)
             Divider()
+            Button("Level-Set Now") { model.web.command("levelset") }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+            Button("Where I Stand…") { model.web.command("profile") }
+            Divider()
             Button("Model & Runtime…") { model.web.command("config") }
             Button("Open .env") { model.openEnv() }
             Button("Reveal Boards Folder") { model.revealBoardsFolder() }

@@ -54,11 +54,54 @@ public struct PythonSettings: Sendable, Equatable {
 
 public struct AppConfig: Sendable {
     public var llm: LLMSettings
+    /// The model that builds the learner profile ("level-set"); OpenRouter by default.
+    public var levelSet: LLMSettings
     public var python: PythonSettings
     public var envFile: URL?
     public var problems: [String]
+    public var levelSetProblems: [String]
 
     public static let defaultOpenRouterModel = "anthropic/claude-fable-5.1"
+    public static let defaultLevelSetModel = "openai/gpt-5.6-sol-pro"
+
+    static func parseProvider(_ raw: String) -> LLMSettings.Provider? {
+        switch raw.lowercased() {
+        case "openrouter": return .openrouter
+        case "lmstudio", "lm_studio", "lm-studio", "local": return .lmstudio
+        case "custom", "openai": return .custom
+        default: return nil
+        }
+    }
+
+    /// Base URL, key and default model for a provider, from the .env values.
+    static func endpoint(_ provider: LLMSettings.Provider, _ get: (String) -> String?) -> (base: String, key: String?, model: String?) {
+        switch provider {
+        case .openrouter:
+            return (get("OPENROUTER_BASE_URL") ?? "https://openrouter.ai/api/v1", get("OPENROUTER_API_KEY"),
+                    get("OPENROUTER_MODEL") ?? defaultOpenRouterModel)
+        case .lmstudio:
+            return (get("LMSTUDIO_BASE_URL") ?? "http://localhost:1234/v1", get("LMSTUDIO_API_KEY"), get("LMSTUDIO_MODEL"))
+        case .custom:
+            return (get("LLM_BASE_URL") ?? "http://localhost:8080/v1", get("LLM_API_KEY"), get("LLM_MODEL"))
+        }
+    }
+
+    static func url(_ raw: String, problems: inout [String]) -> URL {
+        var base = raw
+        while base.hasSuffix("/") { base.removeLast() }
+        if let u = URL(string: base), u.scheme != nil { return u }
+        problems.append("Invalid base URL '\(raw)'")
+        return URL(string: "http://localhost:1234/v1")!
+    }
+
+    static func jsonObject(_ raw: String?, key: String, problems: inout [String]) -> String? {
+        guard let raw else { return nil }
+        if (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any] == nil {
+            problems.append("\(key) is not a JSON object; ignored")
+            return nil
+        }
+        return raw
+    }
 
     /// Where we look for .env, in order.
     public static func candidateEnvFiles(projectRoot: String?, environment: [String: String]) -> [URL] {
@@ -91,49 +134,38 @@ public struct AppConfig: Sendable {
             return v
         }
         var provider: LLMSettings.Provider
-        if let p = get("LLM_PROVIDER")?.lowercased() {
-            switch p {
-            case "openrouter": provider = .openrouter
-            case "lmstudio", "lm_studio", "lm-studio", "local": provider = .lmstudio
-            case "custom", "openai": provider = .custom
-            default:
+        if let p = get("LLM_PROVIDER") {
+            if let parsed = parseProvider(p) { provider = parsed } else {
                 problems.append("Unknown LLM_PROVIDER '\(p)', falling back to lmstudio")
                 provider = .lmstudio
             }
         } else {
             provider = get("OPENROUTER_API_KEY") != nil ? .openrouter : .lmstudio
         }
+        let ep = endpoint(provider, get)
+        if provider == .openrouter && ep.key == nil { problems.append("OPENROUTER_API_KEY is not set in .env") }
+        if provider == .custom && get("LLM_BASE_URL") == nil { problems.append("LLM_BASE_URL is not set for the custom provider") }
+        let llm = LLMSettings(provider: provider, baseURL: url(ep.base, problems: &problems), apiKey: ep.key, model: ep.model,
+                              temperature: get("LLM_TEMPERATURE").flatMap(Double.init) ?? 0.3,
+                              maxTokens: get("LLM_MAX_TOKENS").flatMap(Int.init) ?? 8192,
+                              extraBodyJSON: jsonObject(get("LLM_EXTRA_BODY"), key: "LLM_EXTRA_BODY", problems: &problems))
 
-        var base: String
-        var key: String?
-        var model: String?
-        switch provider {
-        case .openrouter:
-            base = get("OPENROUTER_BASE_URL") ?? "https://openrouter.ai/api/v1"
-            key = get("OPENROUTER_API_KEY")
-            model = get("OPENROUTER_MODEL") ?? defaultOpenRouterModel
-            if key == nil { problems.append("OPENROUTER_API_KEY is not set in .env") }
-        case .lmstudio:
-            base = get("LMSTUDIO_BASE_URL") ?? "http://localhost:1234/v1"
-            key = get("LMSTUDIO_API_KEY")
-            model = get("LMSTUDIO_MODEL")
-        case .custom:
-            base = get("LLM_BASE_URL") ?? "http://localhost:8080/v1"
-            key = get("LLM_API_KEY")
-            model = get("LLM_MODEL")
-            if get("LLM_BASE_URL") == nil { problems.append("LLM_BASE_URL is not set for the custom provider") }
+        // Level-set (learner profile): OpenRouter + openai/gpt-5.6-sol-pro unless overridden.
+        var lsProblems: [String] = []
+        var lsProvider = LLMSettings.Provider.openrouter
+        if let p = get("LEVELSET_PROVIDER") {
+            if let parsed = parseProvider(p) { lsProvider = parsed } else { lsProblems.append("Unknown LEVELSET_PROVIDER '\(p)', using openrouter") }
         }
-        while base.hasSuffix("/") { base.removeLast() }
-        let url = URL(string: base) ?? URL(string: "http://localhost:1234/v1")!
-        if URL(string: base) == nil { problems.append("Invalid base URL '\(base)'") }
-
-        let temperature = get("LLM_TEMPERATURE").flatMap(Double.init) ?? 0.3
-        let maxTokens = get("LLM_MAX_TOKENS").flatMap(Int.init) ?? 8192
-        var extra = get("LLM_EXTRA_BODY")
-        if let e = extra, (try? JSONSerialization.jsonObject(with: Data(e.utf8))) as? [String: Any] == nil {
-            problems.append("LLM_EXTRA_BODY is not a JSON object; ignored")
-            extra = nil
+        let lsEp = endpoint(lsProvider, get)
+        let lsModel = get("LEVELSET_MODEL") ?? (lsProvider == .openrouter ? defaultLevelSetModel : lsEp.model)
+        if lsProvider == .openrouter && lsEp.key == nil {
+            lsProblems.append("OPENROUTER_API_KEY is not set in .env. The level-set runs on OpenRouter (\(lsModel)).")
         }
+        let levelSet = LLMSettings(provider: lsProvider, baseURL: url(lsEp.base, problems: &lsProblems), apiKey: lsEp.key, model: lsModel,
+                                   temperature: get("LEVELSET_TEMPERATURE").flatMap(Double.init),
+                                   maxTokens: get("LEVELSET_MAX_TOKENS").flatMap(Int.init) ?? 32000,
+                                   extraBodyJSON: jsonObject(get("LEVELSET_EXTRA_BODY"), key: "LEVELSET_EXTRA_BODY", problems: &lsProblems)
+                                       ?? (lsProvider == .openrouter ? #"{"response_format":{"type":"json_object"}}"# : nil))
 
         let packages = (get("PYTHON_PACKAGES") ?? "numpy sympy scipy matplotlib")
             .split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init).filter { !$0.isEmpty }
@@ -142,10 +174,8 @@ public struct AppConfig: Sendable {
             packages: packages,
             timeout: get("PYTHON_TIMEOUT").flatMap(Double.init) ?? 120)
 
-        return AppConfig(
-            llm: LLMSettings(provider: provider, baseURL: url, apiKey: key, model: model,
-                             temperature: temperature, maxTokens: maxTokens, extraBodyJSON: extra),
-            python: python, envFile: envFile, problems: problems)
+        return AppConfig(llm: llm, levelSet: levelSet, python: python, envFile: envFile,
+                         problems: problems, levelSetProblems: lsProblems)
     }
 }
 

@@ -13,7 +13,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'App', 'Web');
 const KIT = path.join(ROOT, 'App', 'Python');
-const DATA = path.join(ROOT, 'dev', 'data', 'boards');
+const DATA_ROOT = process.env.EE_DEV_DATA || path.join(ROOT, 'dev', 'data');
+const DATA = path.join(DATA_ROOT, 'boards');
+const PROFILE = path.join(DATA_ROOT, 'learner.json');
 const PORT = Number(process.argv[2] || process.env.PORT || 5178);
 const VENV_PY = path.join(os.homedir(), 'Library', 'Application Support', 'EquationExplainer', 'pyenv', 'bin', 'python');
 fs.mkdirSync(DATA, { recursive: true });
@@ -37,15 +39,21 @@ function loadEnv() {
     }
   }
   const get = (k) => (vals[k] || '').trim() || null;
+  const endpoint = (provider) => provider === 'openrouter'
+    ? { baseURL: get('OPENROUTER_BASE_URL') || 'https://openrouter.ai/api/v1', apiKey: get('OPENROUTER_API_KEY'), model: get('OPENROUTER_MODEL') || 'anthropic/claude-fable-5.1' }
+    : { baseURL: get('LMSTUDIO_BASE_URL') || 'http://localhost:1234/v1', apiKey: get('LMSTUDIO_API_KEY'), model: get('LMSTUDIO_MODEL') };
   const provider = (get('LLM_PROVIDER') || (get('OPENROUTER_API_KEY') ? 'openrouter' : 'lmstudio')).toLowerCase();
   const cfg = { provider, envFile: fs.existsSync(file) ? file : null, problems: [],
-    temperature: Number(get('LLM_TEMPERATURE') || 0.3), maxTokens: Number(get('LLM_MAX_TOKENS') || 8192) };
-  if (provider === 'openrouter') {
-    Object.assign(cfg, { baseURL: get('OPENROUTER_BASE_URL') || 'https://openrouter.ai/api/v1', apiKey: get('OPENROUTER_API_KEY'), model: get('OPENROUTER_MODEL') || 'anthropic/claude-fable-5.1' });
-    if (!cfg.apiKey) cfg.problems.push('OPENROUTER_API_KEY is not set');
-  } else {
-    Object.assign(cfg, { baseURL: get('LMSTUDIO_BASE_URL') || 'http://localhost:1234/v1', apiKey: get('LMSTUDIO_API_KEY'), model: get('LMSTUDIO_MODEL') });
-  }
+    temperature: Number(get('LLM_TEMPERATURE') || 0.3), maxTokens: Number(get('LLM_MAX_TOKENS') || 8192), ...endpoint(provider) };
+  if (provider === 'openrouter' && !cfg.apiKey) cfg.problems.push('OPENROUTER_API_KEY is not set');
+  // level-set model: OpenRouter + openai/gpt-5.6-sol-pro unless overridden
+  const lsProvider = (get('LEVELSET_PROVIDER') || 'openrouter').toLowerCase();
+  const lsEp = endpoint(lsProvider);
+  cfg.levelset = { provider: lsProvider, ...lsEp, model: get('LEVELSET_MODEL') || (lsProvider === 'openrouter' ? 'openai/gpt-5.6-sol-pro' : lsEp.model),
+    temperature: get('LEVELSET_TEMPERATURE') ? Number(get('LEVELSET_TEMPERATURE')) : undefined,
+    maxTokens: Number(get('LEVELSET_MAX_TOKENS') || 32000), problems: [],
+    extra: get('LEVELSET_EXTRA_BODY') ? JSON.parse(get('LEVELSET_EXTRA_BODY')) : (lsProvider === 'openrouter' ? { response_format: { type: 'json_object' } } : {}) };
+  if (lsProvider === 'openrouter' && !lsEp.apiKey) cfg.levelset.problems.push(`OPENROUTER_API_KEY is not set in .env. The level-set runs on OpenRouter (${cfg.levelset.model}).`);
   return cfg;
 }
 
@@ -104,8 +112,17 @@ async function bridge(msg) {
       const c = loadEnv();
       let model = c.model;
       try { model = await resolveModel(c); } catch (e) { c.problems.push(e.message); }
-      return { provider: c.provider === 'openrouter' ? 'OpenRouter' : 'LM Studio', model, baseURL: c.baseURL, envFile: c.envFile, problems: c.problems, python: VENV_PY, packages: 'numpy sympy scipy matplotlib' };
+      const ls = c.levelset;
+      return { provider: c.provider === 'openrouter' ? 'OpenRouter' : 'LM Studio', model, baseURL: c.baseURL, envFile: c.envFile, problems: c.problems, python: VENV_PY, packages: 'numpy sympy scipy matplotlib',
+        levelset: { provider: ls.provider === 'openrouter' ? 'OpenRouter' : 'LM Studio', model: ls.model || 'auto', problems: ls.problems } };
     }
+    case 'allBoards':
+      return { boards: fs.readdirSync(DATA).filter((f) => f.endsWith('.json')).map((f) => fs.readFileSync(path.join(DATA, f), 'utf8')) };
+    case 'loadProfile':
+      return { json: fs.existsSync(PROFILE) ? fs.readFileSync(PROFILE, 'utf8') : '' };
+    case 'saveProfile':
+      fs.writeFileSync(PROFILE, msg.json);
+      return { ok: true };
     case 'python': return runPython(msg.id, msg.code);
     case 'cancel': { const p = running.get(msg.id); if (p) p.kill('SIGTERM'); return { ok: true }; }
     case 'saveBoard': {
@@ -116,7 +133,7 @@ async function bridge(msg) {
     case 'selftest': {
       if (msg.event === 'log') console.log('[selftest]', msg.message);
       if (msg.event === 'reload') return { board: fs.readFileSync(path.join(DATA, msg.id + '.json'), 'utf8') };
-      if (msg.event === 'finish') { fs.writeFileSync(path.join(ROOT, 'dev', 'data', 'selftest-report.json'), msg.report); console.log('[selftest] finished'); }
+      if (msg.event === 'finish') { fs.writeFileSync(path.join(DATA_ROOT, 'selftest-report.json'), msg.report); console.log('[selftest] finished'); }
       return { ok: true };
     }
     default: return { ok: true };
@@ -124,13 +141,14 @@ async function bridge(msg) {
 }
 
 async function chat(req, res) {
-  const { messages } = JSON.parse(await readBody(req));
+  const { messages, purpose } = JSON.parse(await readBody(req));
   res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-cache' });
   const send = (o) => res.write(JSON.stringify(o) + '\n');
   const ctrl = new AbortController();
   res.on('close', () => ctrl.abort());
   try {
-    const cfg = loadEnv();
+    const env = loadEnv();
+    const cfg = purpose === 'levelset' ? env.levelset : env;
     if (cfg.problems.length) throw new Error(cfg.problems.join('; '));
     const model = await resolveModel(cfg);
     const headers = { 'content-type': 'application/json' };
@@ -138,7 +156,7 @@ async function chat(req, res) {
     if (cfg.provider === 'openrouter') Object.assign(headers, { 'HTTP-Referer': 'https://github.com/equation-explainer', 'X-Title': 'Equation Explainer' });
     const r = await fetch(cfg.baseURL + '/chat/completions', {
       method: 'POST', headers, signal: ctrl.signal,
-      body: JSON.stringify({ model, messages, stream: true, temperature: cfg.temperature, max_tokens: cfg.maxTokens }),
+      body: JSON.stringify({ model, messages, stream: true, temperature: cfg.temperature, max_tokens: cfg.maxTokens, ...(cfg.extra || {}) }), // undefined temperature is dropped
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 500)}`);
     const dec = new TextDecoder();

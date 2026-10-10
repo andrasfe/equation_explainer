@@ -14,6 +14,9 @@
     pending: null,      // {anchor, range} captured from the current selection
     outlineOpen: false,
     config: null,
+    library: new Map(), // boardId -> every saved board (the learner model looks across all of them)
+    profile: null,      // learner profile from the last level-set
+    ls: { running: false, error: null }, // level-set state
   });
 
   const dom = {};
@@ -39,14 +42,25 @@
 
   // ------------------------------------------------------------ persistence
   const savers = new Map();
+  const savedSnaps = new Map(); // boardId -> what is on disk, so unchanged boards are never re-dated
   const isEmpty = (b) => Object.values(b.threads).every((t) => t.cards.length === 0);
+  function snapsOf(b) {
+    const { updatedAt, openPath, ...content } = b; // eslint-disable-line no-unused-vars
+    return { content: JSON.stringify(content), nav: JSON.stringify(openPath) };
+  }
 
   async function saveNow(board) {
     if (!board || isEmpty(board)) return;
-    board.updatedAt = Date.now();
+    const snap = snapsOf(board);
+    const prev = savedSnaps.get(board.id);
+    if (prev && prev.content === snap.content && prev.nav === snap.nav) return; // nothing changed
+    if (!prev || prev.content !== snap.content) board.updatedAt = Date.now(); // opening/closing branches is not an edit
+    savedSnaps.set(board.id, snap);
+    S.library.set(board.id, board);
     try {
       await B.call('saveBoard', { id: board.id, title: board.title || '', json: JSON.stringify(board) });
     } catch (e) {
+      savedSnaps.delete(board.id);
       toast('Could not save: ' + e.message, 'error');
     }
   }
@@ -58,10 +72,12 @@
   }
 
   // ------------------------------------------------------------ board lifecycle
-  function setBoard(board) {
+  function setBoard(board, fromDisk = false) {
     if (S.board && S.board !== board) save(S.board);
+    if (fromDisk && !isEmpty(board)) savedSnaps.set(board.id, snapsOf(board));
     S.board = board;
     S.cache.set(board.id, board);
+    if (!isEmpty(board)) S.library.set(board.id, board);
     for (const t of Object.values(board.threads)) {
       for (const c of t.cards) {
         if (c.status === 'streaming' && !S.streams.has(c.id)) { c.status = 'stopped'; touch(c); }
@@ -80,6 +96,7 @@
   function newBoard() {
     setBoard(M.newBoard());
     focusComposer('root');
+    maybeAutoLevelSet();
   }
 
   function ensureTitle(board, text, isCode) {
@@ -117,8 +134,20 @@
     return card;
   }
 
+  /** Profile + everything asked since it was made (all boards), so each rating counts right away. */
+  function learnerContext(board, answerCardId) {
+    const boards = new Map(S.library);
+    boards.set(board.id, board);
+    const since = S.profile && S.profile.meta ? S.profile.meta.updatedAt : 0;
+    const items = M.evidence([...boards.values()])
+      .filter((it) => it.answerId !== answerCardId && it.at > since)
+      .sort((a, b) => b.at - a.at)
+      .slice(0, 30);
+    return { profile: S.profile, items };
+  }
+
   function stream(board, threadId, card, mode) {
-    const messages = M.buildMessages(board, threadId, card.id, mode);
+    const messages = M.buildMessages(board, threadId, card.id, mode, learnerContext(board, card.id));
     const h = B.chat(messages, {
       onChunk({ content, reasoning }) {
         card.text += content;
@@ -140,6 +169,7 @@
         touch(card);
         save(board);
         if (board === S.board) render();
+        updateLevelChip();
       },
       onError(err) {
         S.streams.delete(card.id);
@@ -415,6 +445,7 @@
         }
       }
       updateChips(ce, card);
+      updatePoll(ce, card);
       if (card.status === 'streaming') streaming = true;
       prev = ce;
     });
@@ -439,6 +470,7 @@
         el('summary', {}, 'scratch work'), el('div', { class: 'scratch-body' })),
       el('div', { class: 'card-body' }),
       el('div', { class: 'card-status', 'data-noanchor': '' }),
+      el('div', { class: 'card-poll', 'data-noanchor': '' }),
       el('div', { class: 'card-branches', 'data-noanchor': '' }),
       el('div', { class: 'card-tools', 'data-noanchor': '' }));
   }
@@ -573,6 +605,30 @@
         el('span', { class: 'chip-q' }, truncate(t.title, 44)),
         deeper ? el('span', { class: 'chip-deeper' }, `+${deeper}`) : null);
     }));
+  }
+
+  const POLL_NOTE = (r) => (r == null ? 'unrated, counts as 1' : r <= 3 ? 'noted: will be reinforced' : r <= 6 ? 'noted: brief reminders' : r <= 8 ? 'noted' : 'noted: treated as known');
+
+  /** "did this sink in?" 1-10 under every finished answer. */
+  function updatePoll(ce, card) {
+    const box = ce.querySelector('.card-poll');
+    if (!box) return;
+    const show = card.role === 'assistant' && (card.status === 'done' || card.status === 'stopped') && !!R.splitThink(card.text).body.trim();
+    const sig = show ? String(card.rating == null ? 'u' : card.rating) : '';
+    if (ce._poll === sig) return;
+    ce._poll = sig;
+    if (!show) { box.replaceChildren(); return; }
+    const r = card.rating == null ? null : card.rating;
+    box.replaceChildren(
+      el('span', { class: 'poll-q' }, 'did this sink in?'),
+      el('span', { class: 'poll-scale', role: 'radiogroup', 'aria-label': 'did this sink in, 1 to 10' },
+        Array.from({ length: 10 }, (_, i) => i + 1).map((n) =>
+          el('button', {
+            class: 'poll-n ' + (n <= 3 ? 'lo' : n <= 6 ? 'mid' : 'hi') + (r === n ? ' on' : ''),
+            'data-act': 'rate', 'data-n': n, role: 'radio', 'aria-checked': r === n ? 'true' : 'false',
+            title: n === 1 ? '1: did not sink in' : n === 10 ? '10: fully sank in' : String(n),
+          }, String(n)))),
+      el('span', { class: 'poll-note' + (r == null ? ' unrated' : '') }, POLL_NOTE(r)));
   }
 
   function findCardEl(cardId) {
@@ -1087,6 +1143,119 @@
     setTimeout(scheduleOverlay, 60);
   }
 
+  // ------------------------------------------------------------ learner model: level-set + profile
+  function allBoards() {
+    const m = new Map(S.library);
+    if (S.board && !isEmpty(S.board)) m.set(S.board.id, S.board);
+    return [...m.values()];
+  }
+
+  function evidenceState() {
+    const items = M.evidence(allBoards());
+    const hash = M.evidenceHash(items);
+    const stale = !!items.length && (!S.profile || !S.profile.meta || S.profile.meta.hash !== hash);
+    return { items, hash, stale };
+  }
+
+  async function maybeAutoLevelSet() {
+    if (!S.config) await refreshConfig();
+    const problems = (S.config && S.config.levelset && S.config.levelset.problems) || [];
+    if (problems.length) { S.ls.error = problems[0]; updateLevelChip(); return; }
+    levelSet({ force: false });
+  }
+
+  /** Holistic reassessment across every board, on the level-set model (OpenRouter by default). */
+  function levelSet({ force = false, open = false } = {}) {
+    if (S.ls.running) { if (open) showProfile(); return; }
+    const { messages, items } = M.levelSetMessages(allBoards(), S.profile);
+    if (!items.length) { if (open) showProfile(); return; }
+    const hash = M.evidenceHash(items);
+    if (!force && S.profile && S.profile.meta && S.profile.meta.hash === hash) return;
+    S.ls = { running: true, error: null, startedAt: Date.now(), open };
+    updateLevelChip();
+    if (open) showProfile();
+    let text = '';
+    const fail = (msg) => {
+      S.ls = { running: false, error: msg };
+      updateLevelChip();
+      toast('Level-set failed: ' + msg, 'error');
+      if (open || profileOpen()) showProfile();
+    };
+    B.chat(messages, {
+      onChunk({ content }) { text += content; },
+      async onDone({ model, cancelled }) {
+        if (cancelled) { S.ls = { running: false, error: null }; updateLevelChip(); return; }
+        let p;
+        try { p = M.parseProfile(text); } catch (e) { fail(e.message); return; }
+        p.meta = {
+          updatedAt: Date.now(), model: model || '', hash, questions: items.length,
+          rated: items.filter((i) => i.rated).length, boards: new Set(items.map((i) => i.boardId)).size,
+        };
+        try { await B.call('saveProfile', { json: JSON.stringify(p, null, 2) }); } catch (e) { fail('could not save the profile: ' + e.message); return; }
+        S.profile = p;
+        S.ls = { running: false, error: null };
+        updateLevelChip();
+        toast(`Level-set: overall ${p.overall.level}/10 across ${p.topics.length} topics. Explanations will adapt.`);
+        if (open || profileOpen()) showProfile();
+      },
+      onError(err) { fail(err.message); },
+    }, { purpose: 'levelset' });
+  }
+
+  function updateLevelChip() {
+    if (!dom.levelBtn) return;
+    const p = S.profile;
+    const { stale } = evidenceState();
+    dom.levelBtn.textContent = p ? `level ${p.overall.level}/10` : 'level ?';
+    dom.levelBtn.classList.toggle('stale', stale && !S.ls.running);
+    dom.levelBtn.title = (p ? `Where you stand (assessed ${EE.util.relTime(p.meta.updatedAt)})` : 'No assessment yet') +
+      (stale ? '\nNew questions or ratings since then' : '') + (S.ls.error ? '\n⚠ ' + S.ls.error : '');
+    dom.levelsetBtn.disabled = S.ls.running;
+    dom.levelsetBtn.replaceChildren(S.ls.running ? el('span', { class: 'chalk-dots' }, 'assessing') : '⟳ level-set');
+  }
+
+  const profileOpen = () => !!document.querySelector('#modal .modal-profile');
+
+  function showProfile() {
+    const p = S.profile;
+    const cfg = (S.config && S.config.levelset) || {};
+    const { items, stale } = evidenceState();
+    const rated = items.filter((i) => i.rated).length;
+    const tone = (m) => (m <= 3 ? 'lo' : m <= 6 ? 'mid' : 'hi');
+    const bar = (m) => el('span', { class: 'mbar' }, el('span', { class: 'mfill ' + tone(m), style: `width:${m * 10}%` }));
+    const recapTag = (m) => (m <= 3 ? 'recap' : m <= 6 ? 'reminder' : m <= 8 ? 'name only' : 'known');
+    const body = [el('h2', { class: 'chalk-title modal-title' }, 'Where you stand')];
+    if (p) {
+      body.push(el('div', { class: 'lvl-row' }, el('span', { class: 'lvl-big chalk-title' }, `${p.overall.level}/10`), bar(p.overall.level)));
+      if (p.overall.summary) body.push(el('p', { class: 'lvl-summary' }, p.overall.summary));
+      if (p.overall.pitch) body.push(el('p', { class: 'muted small' }, 'How explanations are pitched: ' + p.overall.pitch));
+      if (p.topics.length) {
+        body.push(el('div', { class: 'topic-list' }, p.topics.slice().sort((a, b) => a.mastery - b.mastery).map((t) =>
+          el('div', { class: 'topic-row', title: t.evidence || '' },
+            el('span', { class: 'topic-name' }, t.name), bar(t.mastery),
+            el('span', { class: 'topic-score' }, `${t.mastery}/10`),
+            el('span', { class: 'topic-recap ' + tone(t.mastery) }, recapTag(t.mastery))))));
+      }
+      if (p.reinforce.length) body.push(el('p', { class: 'small' }, el('span', { class: 'muted' }, 'reinforce when relevant: '), p.reinforce.join(' · ')));
+      body.push(el('p', { class: 'muted small' },
+        `Assessed ${EE.util.relTime(p.meta.updatedAt)}${p.meta.model ? ' by ' + p.meta.model : ''} from ${p.meta.questions} questions on ${p.meta.boards} board${p.meta.boards === 1 ? '' : 's'} (${p.meta.rated} rated, unrated ones count as 1).`));
+      if (stale) body.push(el('p', { class: 'small warn' }, 'There are new questions or ratings since then. They already shape new explanations; a level-set folds them into the profile.'));
+    } else {
+      body.push(el('p', {}, items.length
+        ? `No assessment yet. ${items.length} earlier question${items.length === 1 ? '' : 's'} (${rated} rated; unrated ones count as 1) will be assessed.`
+        : 'No assessment yet. Ask a few questions and rate how well each answer sank in.'));
+    }
+    if (S.ls.running) body.push(el('p', { class: 'small' }, el('span', { class: 'chalk-dots' }, `assessing with ${cfg.model || 'the level-set model'}`)));
+    const problems = [S.ls.error, ...(cfg.problems || [])].filter((x, i, a) => x && a.indexOf(x) === i);
+    if (problems.length) body.push(el('div', { class: 'cfg-problems' }, problems.map((x) => el('div', {}, '⚠ ' + x))));
+    body.push(el('p', { class: 'muted small' }, `Level-set model: ${cfg.provider || 'OpenRouter'} · ${cfg.model || 'openai/gpt-5.6-sol-pro'} (LEVELSET_MODEL in .env). It runs on its own whenever you start a new board.`));
+    let close;
+    const run = el('button', { class: 'chalk-btn primary', onclick: () => levelSet({ force: true, open: true }) }, S.ls.running ? 'assessing…' : 'level-set now');
+    if (S.ls.running || !items.length) run.disabled = true;
+    body.push(el('div', { class: 'modal-actions' }, run, el('button', { class: 'chalk-btn', onclick: () => close() }, 'close')));
+    close = modal(el('div', {}, body), 'modal-wide modal-profile');
+  }
+
   // ------------------------------------------------------------ events
   function onClick(e) {
     const btn = e.target.closest('[data-act]');
@@ -1136,6 +1305,16 @@
       case 'clear-run': {
         const f = M.findCard(b, cardId);
         if (f && f.card.runs) { delete f.card.runs[idx]; touch(f.card); save(b); render(); }
+        break;
+      }
+      case 'rate': {
+        const f = M.findCard(b, cardId);
+        if (!f) break;
+        f.card.rating = Number(btn.dataset.n);
+        f.card.ratedAt = Date.now();
+        save(b);
+        render();
+        updateLevelChip();
         break;
       }
       case 'explain-run': explainRun(cardId, idx); break;
@@ -1202,7 +1381,7 @@
       crumbs: $('crumbs'), backBtn: $('btn-back'), mapBtn: $('btn-map'), fontBtn: $('btn-font'),
       outline: $('outline'), outlineTree: $('outline-tree'), popover: $('popover'), popQuote: $('pop-quote'),
       popInput: $('pop-input'), popChips: $('pop-chips'), modal: $('modal'), toast: $('toast'),
-      status: $('status'), statusText: $('status-text'),
+      status: $('status'), statusText: $('status-text'), levelBtn: $('btn-level'), levelsetBtn: $('btn-levelset'),
     });
     document.addEventListener('click', onClick);
     dom.backBtn.addEventListener('click', closeAll);
@@ -1213,6 +1392,8 @@
     $('btn-zoom-in').addEventListener('click', () => zoom('in'));
     $('btn-zoom-out').addEventListener('click', () => zoom('out'));
     dom.status.addEventListener('click', showConfig);
+    dom.levelBtn.addEventListener('click', showProfile);
+    dom.levelsetBtn.addEventListener('click', () => levelSet({ force: true, open: true }));
     $('btn-new').addEventListener('click', newBoard);
 
     CHIPS.forEach((c) => dom.popChips.append(el('button', { class: 'chip' + (c.mode === 'compute' ? ' compute' : ''), onclick: () => submitPopover(c.q, c.mode) }, c.q)));
@@ -1263,7 +1444,8 @@
         const b = JSON.parse(json);
         const cached = S.cache.get(b.id);
         const live = cached && [...S.streams.values()].some((s) => s.boardId === b.id);
-        setBoard(live ? cached : b);
+        setBoard(live ? cached : b, !live);
+        updateLevelChip();
       } catch (e) {
         toast('Could not open board: ' + e.message, 'error');
       }
@@ -1273,6 +1455,7 @@
       const cmds = {
         closeLast, closeAll, toggleMap: () => toggleOutline(), insertMatrix: () => openMatrix(),
         focus: () => focusComposer(), zoomChanged: () => setTimeout(scheduleOverlay, 50), config: showConfig,
+        levelset: () => levelSet({ force: true, open: true }), profile: showProfile,
       };
       if (cmds[name]) cmds[name]();
     },
@@ -1282,6 +1465,9 @@
     },
     deleted({ id }) {
       S.cache.delete(id);
+      S.library.delete(id);
+      savedSnaps.delete(id);
+      updateLevelChip();
       if (S.board && S.board.id === id) newBoard();
     },
     pyStatus({ text }) { toast(text); },
@@ -1295,16 +1481,27 @@
     wire();
     let init = {};
     try { init = (await B.call('ready')) || {}; } catch (e) { /* dev server may be down */ }
+    try {
+      const r = await B.call('allBoards');
+      for (const j of (r && r.boards) || []) {
+        try { const b = JSON.parse(j); S.library.set(b.id, b); savedSnaps.set(b.id, snapsOf(b)); } catch (e) { /* skip a corrupt file */ }
+      }
+    } catch (e) { /* no library: the learner model starts empty */ }
+    try {
+      const r = await B.call('loadProfile');
+      if (r && r.json) S.profile = JSON.parse(r.json);
+    } catch (e) { /* no profile yet */ }
     if (init.board) {
-      try { setBoard(JSON.parse(init.board)); } catch (e) { newBoard(); }
+      try { setBoard(JSON.parse(init.board), true); } catch (e) { newBoard(); }
     } else newBoard();
-    refreshConfig();
+    await refreshConfig();
+    updateLevelChip();
   }
 
   EE.app = {
     S, cols, dom, send, askAbout, openThread, closeThread, closeAll, closeLast, runCode, newBoard, setBoard,
     selectionToAnchor, showPopover, hidePopover, submitPopover, render, refreshConfig, toggleOutline, openMatrix,
-    drawOverlay, findCardEl,
+    drawOverlay, findCardEl, levelSet, showProfile, learnerContext, evidenceState,
   };
   document.addEventListener('DOMContentLoaded', boot);
 })();

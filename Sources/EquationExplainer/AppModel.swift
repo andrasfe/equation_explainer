@@ -159,15 +159,27 @@ final class AppModel: ObservableObject {
                 do { model = try await LLMClient(settings: cfg.llm).resolveModel() } catch { problems.append(error.localizedDescription) }
             }
             let python = cfg.python.interpreter ?? runner.supportDir.appendingPathComponent("pyenv/bin/python").path
+            let levelSet: [String: Any] = ["provider": cfg.levelSet.displayName, "model": cfg.levelSet.model ?? "auto",
+                                           "problems": cfg.levelSetProblems]
             return ["provider": cfg.llm.displayName, "model": model, "baseURL": cfg.llm.baseURL.absoluteString,
                     "envFile": cfg.envFile?.path ?? "", "problems": problems, "python": python,
-                    "packages": cfg.python.packages.joined(separator: " ")]
+                    "packages": cfg.python.packages.joined(separator: " "), "levelset": levelSet]
 
         case "chat":
             let id = str("id")
             let raw = body["messages"] as? [[String: Any]] ?? []
             let messages = raw.map { ["role": $0["role"] as? String ?? "user", "content": $0["content"] as? String ?? ""] }
-            startChat(id: id, messages: messages)
+            startChat(id: id, messages: messages, purpose: str("purpose"))
+            return ["ok": true]
+
+        case "allBoards":
+            return ["boards": store.allJSON()]
+
+        case "loadProfile":
+            return ["json": (try? String(contentsOf: store.profileURL, encoding: .utf8)) ?? ""]
+
+        case "saveProfile":
+            try Data(str("json").utf8).write(to: store.profileURL, options: .atomic)
             return ["ok": true]
 
         case "cancel":
@@ -233,13 +245,19 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func startChat(id: String, messages: [[String: String]]) {
+    private func startChat(id: String, messages: [[String: String]], purpose: String) {
         let cfg = config
-        if cfg.llm.provider == .openrouter && cfg.llm.apiKey == nil {
+        let isLevelSet = purpose == "levelset"
+        let settings = isLevelSet ? cfg.levelSet : cfg.llm
+        if isLevelSet, let problem = cfg.levelSetProblems.first {
+            web.failChat(id: id, message: problem)
+            return
+        }
+        if !isLevelSet && cfg.llm.provider == .openrouter && cfg.llm.apiKey == nil {
             web.failChat(id: id, message: "OPENROUTER_API_KEY is missing. Add it to \(cfg.envFile?.path ?? ".env") or set LLM_PROVIDER=lmstudio.")
             return
         }
-        let client = LLMClient(settings: cfg.llm)
+        let client = LLMClient(settings: settings)
         let web = self.web
         chats[id] = Task { [weak self] in
             var model: String?
@@ -255,16 +273,16 @@ final class AppModel: ObservableObject {
                 }
                 if !Task.isCancelled { web.finishChat(id: id, model: model, finish: finish) }
             } catch {
-                if !Task.isCancelled { web.failChat(id: id, message: Self.describe(error, cfg)) }
+                if !Task.isCancelled { web.failChat(id: id, message: Self.describe(error, settings)) }
             }
             self?.chats[id] = nil
         }
     }
 
-    private static func describe(_ error: Error, _ cfg: AppConfig) -> String {
+    private static func describe(_ error: Error, _ settings: LLMSettings) -> String {
         if let u = error as? URLError, [.cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .timedOut].contains(u.code) {
-            let hint = cfg.llm.provider == .lmstudio ? " Is LM Studio running with its server started?" : ""
-            return "Could not reach \(cfg.llm.baseURL.absoluteString).\(hint) (\(u.localizedDescription))"
+            let hint = settings.provider == .lmstudio ? " Is LM Studio running with its server started?" : ""
+            return "Could not reach \(settings.baseURL.absoluteString).\(hint) (\(u.localizedDescription))"
         }
         return error.localizedDescription
     }

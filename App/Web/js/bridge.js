@@ -38,14 +38,16 @@ EE.bridge = (() => {
     if (h) h.onError(new Error(message || 'Unknown error'));
   };
 
-  /** Start a streamed chat completion. Returns {id, cancel()}. */
-  function chat(messages, handlers) {
+  /** Start a streamed chat completion. Returns {id, cancel()}.
+   *  opts.purpose: 'explain' (the board's model) or 'levelset' (the learner-profile model). */
+  function chat(messages, handlers, opts = {}) {
     const id = EE.util.uid('chat');
+    const purpose = opts.purpose || 'explain';
     chats.set(id, handlers);
     if (isNative) {
-      call('chat', { id, messages }).catch((e) => EE.native.error({ id, message: e.message }));
+      call('chat', { id, messages, purpose }).catch((e) => EE.native.error({ id, message: e.message }));
     } else {
-      devChat(id, messages);
+      devChat(id, messages, purpose);
     }
     return {
       id,
@@ -60,7 +62,7 @@ EE.bridge = (() => {
     };
   }
 
-  async function devChat(id, messages) {
+  async function devChat(id, messages, purpose) {
     const h = chats.get(id);
     const ctrl = new AbortController();
     h.ctrl = ctrl;
@@ -68,7 +70,7 @@ EE.bridge = (() => {
       const res = await fetch('/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify({ messages, purpose }),
         signal: ctrl.signal,
       });
       if (!res.ok) throw new Error(await res.text());

@@ -15,6 +15,18 @@ is saved with all of its branches, and the circled spots stay marked so you can 
   highlighted. Columns chain to any depth, with a breadcrumb and a *board map* to jump between levels.
 - **Real math.** KaTeX renders LaTeX, matrices (`pmatrix`, `bmatrix`, …) and Dirac notation
   (`\ket`, `\bra`, `\braket`). The **▦ matrix** helper builds matrices with presets (I, X, Y, Z, H, S, T, CNOT).
+- **It learns where you stand.**
+  - Under every answer, a poll asks "did this sink in?" from 1 to 10. Unrated answers count as 1.
+  - The **level-set** pass reads every question and rating across all boards and builds a learner
+    profile: an overall level, plus mastery per topic. It runs on OpenRouter with
+    `openai/gpt-5.6-sol-pro`, by itself whenever you start a new board, and on demand from
+    **⟳ level-set** (⇧⌘L).
+  - Each explanation's system prompt includes the profile plus everything asked since the last
+    level-set, with its rating, so a rating counts on the very next question.
+  - Recap scales with the score. 1–3 gets a condensed, higher-level refresher, 4–6 a brief reminder,
+    7–8 a name-check, and 9–10 is treated as known. **level n/10** shows the profile.
+- **No code unless you ask.** Answers stick to mathematics. Code appears only when your question asks
+  for code, Python, a script or a plot, or when you use *compute* mode.
 - **Computation.**
   - *compute* mode makes the model write a runnable Python block for your calculation.
   - *python* mode runs your own code.
@@ -41,12 +53,15 @@ make run                  # builds "build/Equation Explainer.app" and opens it
 | `LMSTUDIO_BASE_URL` / `LMSTUDIO_MODEL` | default `http://localhost:1234/v1`; a blank model means whatever LM Studio has loaded |
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | default model `anthropic/claude-fable-5.1` |
 | `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_EXTRA_BODY` | generation settings (`LLM_EXTRA_BODY` is JSON merged into the request) |
+| `LEVELSET_MODEL` | model for the level-set, default `openai/gpt-5.6-sol-pro` on OpenRouter (needs `OPENROUTER_API_KEY`) |
+| `LEVELSET_PROVIDER`, `LEVELSET_MAX_TOKENS`, `LEVELSET_EXTRA_BODY` | where the level-set runs (`openrouter` by default, or `lmstudio`) and its request settings |
 | `PYTHON_PATH` | use your own interpreter instead of the managed environment |
 | `PYTHON_PACKAGES`, `PYTHON_TIMEOUT` | packages for the managed environment, and the per-run time limit in seconds |
 
 The first ▶ Execute creates a managed virtualenv in `~/Library/Application Support/EquationExplainer/pyenv`.
 This takes about a minute and happens only once. Boards are JSON files in
 `~/Library/Application Support/EquationExplainer/Boards` (**Board ▸ Reveal Boards Folder**).
+The learner profile sits next to that folder in `learner.json`.
 
 ## Keys
 
@@ -57,6 +72,7 @@ This takes about a minute and happens only once. Boards are JSON files in
 | `Esc` or `⌘[` | close the rightmost side question |
 | `⇧⌘⌫` | back to the original (close all) |
 | `⇧⌘M` / `⌥⌘M` | board map / insert matrix |
+| `⇧⌘L` | level-set now |
 | `Enter` / `Shift+Enter` | write / new line (`⌘Enter` runs in python mode) |
 
 ## Development

@@ -78,11 +78,16 @@ EE.selfTest = async function selfTest(opts = {}) {
 
   await log('self test starting');
   let rootAnswer, branch1, branch2;
+  // record every prompt the app sends, to check what the models are told
+  const sent = [];
+  const origChat = B.chat;
+  B.chat = (messages, handlers, o) => { sent.push({ purpose: (o && o.purpose) || 'explain', messages }); return origChat(messages, handlers, o); };
+  const lastSystem = () => { const x = sent.filter((m) => m.purpose === 'explain').pop(); return x ? x.messages[0].content : ''; };
 
   await step('model configuration', async () => {
     const c = await B.call('config');
     assert(c.provider && c.model, 'no provider/model: ' + JSON.stringify(c));
-    return { provider: c.provider, model: c.model, envFile: c.envFile, problems: c.problems };
+    return { provider: c.provider, model: c.model, envFile: c.envFile, problems: c.problems, levelset: c.levelset };
   });
 
   await step('matrix helper inserts LaTeX', async () => {
@@ -99,6 +104,23 @@ EE.selfTest = async function selfTest(opts = {}) {
     return { inserted: v.slice(0, 60) };
   });
 
+  await step('a new board level-sets the earlier boards (unrated = 1)', async () => {
+    const { items } = app.evidenceState();
+    if (!items.length) return { note: 'no earlier boards to assess' };
+    await waitFor(() => S.ls.running || S.profile || S.ls.error, 10000, 'the level-set to start');
+    await waitFor(() => !S.ls.running, 15 * 60 * 1000, 'the level-set to finish');
+    assert(!S.ls.error, 'level-set failed: ' + S.ls.error);
+    const p = S.profile;
+    assert(p && p.topics.length > 0, 'no profile topics');
+    const rated = items.filter((i) => i.rated).length;
+    if (!rated) assert(p.topics.every((t) => t.mastery <= 2), 'unrated topics must stay at 1: ' + p.topics.map((t) => t.name + ':' + t.mastery).join(', '));
+    app.showProfile();
+    await settle();
+    await snap('00-level-set-profile');
+    document.querySelector('#modal .chalk-btn:not(.primary)').click();
+    return { level: p.overall.level, topics: p.topics.length, questions: p.meta.questions, rated: p.meta.rated, model: p.meta.model, sample: p.topics.slice(0, 4).map((t) => `${t.name}:${t.mastery}`) };
+  });
+
   await step('explain an equation (root)', async () => {
     const prompt = opts.prompt || String.raw`Explain the Hadamard gate: why is $H\ket{0} = \frac{1}{\sqrt{2}}\left(\ket{0}+\ket{1}\right)$, and why is $H^2 = I$? Use the matrix form.`;
     rootAnswer = app.send('root', prompt, 'explain');
@@ -107,8 +129,26 @@ EE.selfTest = async function selfTest(opts = {}) {
     const len = answerOk(rootAnswer);
     const katexCount = app.findCardEl(rootAnswer.id).querySelectorAll('.katex').length;
     assert(katexCount > 0, 'no rendered math in the answer');
+    const sys = lastSystem();
+    assert(sys.includes('THE STUDENT'), 'the system prompt has no learner section');
+    assert(sys.includes('Do not include code') && !sys.includes('boardkit'), 'code should be off unless asked');
+    assert(!/```/.test(rootAnswer.text), 'the explanation contains code although none was asked for');
     await snap('01-root-answer');
-    return { chars: len, formulas: katexCount };
+    return { chars: len, formulas: katexCount, systemChars: sys.length };
+  });
+
+  await step('sink-in poll records a rating', async () => {
+    const ce = app.findCardEl(rootAnswer.id);
+    const btn = ce.querySelector('.card-poll .poll-n[data-n="3"]');
+    assert(btn, 'no poll under the answer');
+    btn.scrollIntoView({ block: 'center' });
+    await settle();
+    btn.click();
+    await settle();
+    assert(rootAnswer.rating === 3, 'rating not stored');
+    assert(ce.querySelector('.poll-n.on') && ce.querySelector('.poll-n.on').dataset.n === '3', 'poll does not show the rating');
+    await snap('01b-poll');
+    return { rating: rootAnswer.rating, note: ce.querySelector('.poll-note').textContent };
   });
 
   await step('highlight an equation and ask a side question', async () => {
@@ -120,10 +160,12 @@ EE.selfTest = async function selfTest(opts = {}) {
     await idle();
     await settle();
     const len = answerOk(lastCard(branch1.id));
+    const ratedLine = (lastSystem().split('\n').find((l) => l.includes(': 3/10,')) || '');
+    assert(ratedLine, 'the rating of the previous answer did not reach the next prompt');
     app.drawOverlay();
     const loops = document.querySelectorAll('#overlay .chalk-loop').length;
     await snap('03-side-question');
-    return { quote: anchor.quote.slice(0, 80), llmText: anchor.llmText.slice(0, 120), partial: anchor.partial.length, chars: len, chalkCircles: loops };
+    return { quote: anchor.quote.slice(0, 80), partial: anchor.partial.length, chars: len, chalkCircles: loops, ratedLine: ratedLine.slice(0, 160) };
   });
 
   await step('drill down further from the side question', async () => {
@@ -164,6 +206,7 @@ EE.selfTest = async function selfTest(opts = {}) {
     await idle();
     await settle();
     answerOk(card);
+    assert(lastSystem().includes('boardkit'), 'compute mode should switch code on');
     const ce = app.findCardEl(card.id);
     const btn = ce.querySelector('.btn-run');
     assert(btn, 'the compute answer contains no runnable python block');
@@ -203,6 +246,8 @@ EE.selfTest = async function selfTest(opts = {}) {
     await settle();
     const after = JSON.stringify(Object.keys(S.board.threads).sort());
     assert(before === after, 'threads differ after reload');
+    const reRoot = S.board.threads.root.cards.find((c) => c.id === rootAnswer.id);
+    assert(reRoot && reRoot.rating === 3, 'the rating did not survive the reload');
     const chip = document.querySelector('.branch-chip');
     assert(chip, 'no branch chip on the reloaded board');
     chip.click();
@@ -212,6 +257,23 @@ EE.selfTest = async function selfTest(opts = {}) {
     return { threads: Object.keys(S.board.threads).length };
   });
 
+  await step('level-set button folds new ratings into the profile', async () => {
+    const before = S.profile && S.profile.meta ? S.profile.meta.updatedAt : 0;
+    document.getElementById('btn-levelset').click();
+    await sleep(300);
+    assert(S.ls.running || S.ls.error, 'the level-set did not start');
+    await waitFor(() => !S.ls.running, 15 * 60 * 1000, 'the level-set to finish');
+    assert(!S.ls.error, 'level-set failed: ' + S.ls.error);
+    const p = S.profile;
+    assert(p.meta.updatedAt > before, 'profile not updated');
+    assert(p.meta.rated >= 1, 'the new rating was not counted');
+    await settle();
+    await snap('09-profile-after-ratings');
+    document.querySelector('#modal .chalk-btn:not(.primary)').click();
+    return { level: p.overall.level, topics: p.topics.length, rated: p.meta.rated, top: p.topics.slice().sort((a, b) => b.mastery - a.mastery).slice(0, 3).map((t) => `${t.name}:${t.mastery}`) };
+  });
+
+  B.chat = origChat;
   report.finishedAt = new Date().toISOString();
   report.boardId = S.board && S.board.id;
   await log(report.ok ? 'ALL PASSED' : 'SOME STEPS FAILED');

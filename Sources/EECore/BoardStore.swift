@@ -56,6 +56,16 @@ public final class BoardStore: @unchecked Sendable {
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    /// Every board's raw JSON (for the learner model, which looks across all boards).
+    public func allJSON() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "json" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+    }
+
+    /// The learner profile lives next to the Boards folder.
+    public var profileURL: URL { dir.deletingLastPathComponent().appendingPathComponent("learner.json") }
+
     public func load(_ id: String) throws -> Data {
         lock.lock(); defer { lock.unlock() }
         let u = try url(id)

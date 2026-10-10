@@ -43,6 +43,28 @@ final class ConfigTests: XCTestCase {
         XCTAssertFalse(c.problems.isEmpty)
     }
 
+    func testLevelSetDefaultsToOpenRouterSolPro() {
+        let missing = AppConfig.resolve(values: ["LLM_PROVIDER": "lmstudio"], envFile: nil)
+        XCTAssertEqual(missing.levelSet.provider, .openrouter)
+        XCTAssertEqual(missing.levelSet.model, "openai/gpt-5.6-sol-pro")
+        XCTAssertEqual(missing.levelSet.baseURL.absoluteString, "https://openrouter.ai/api/v1")
+        XCTAssertNil(missing.levelSet.temperature)
+        XCTAssertEqual(missing.levelSet.extraBodyJSON, #"{"response_format":{"type":"json_object"}}"#)
+        XCTAssertEqual(missing.levelSetProblems.count, 1)        // no key
+        XCTAssertTrue(missing.problems.isEmpty)                   // main chat (LM Studio) is fine
+
+        let ok = AppConfig.resolve(values: ["LLM_PROVIDER": "lmstudio", "OPENROUTER_API_KEY": "k", "LEVELSET_MODEL": "x/y"], envFile: nil)
+        XCTAssertTrue(ok.levelSetProblems.isEmpty)
+        XCTAssertEqual(ok.levelSet.apiKey, "k")
+        XCTAssertEqual(ok.levelSet.model, "x/y")
+        XCTAssertEqual(ok.llm.provider, .lmstudio)
+
+        let local = AppConfig.resolve(values: ["LEVELSET_PROVIDER": "lmstudio", "LMSTUDIO_MODEL": "gemma"], envFile: nil)
+        XCTAssertEqual(local.levelSet.provider, .lmstudio)
+        XCTAssertEqual(local.levelSet.model, "gemma")
+        XCTAssertTrue(local.levelSetProblems.isEmpty)
+    }
+
     func testTrailingSlashAndBadExtraBody() {
         let c = AppConfig.resolve(values: ["LMSTUDIO_BASE_URL": "http://box:1234/v1/", "LLM_EXTRA_BODY": "nope"], envFile: nil)
         XCTAssertEqual(c.llm.baseURL.absoluteString, "http://box:1234/v1")
@@ -105,6 +127,9 @@ final class BoardStoreTests: XCTestCase {
         let renamed = try store.rename("b1", title: "QFT")
         XCTAssertEqual(BoardStore.summary(from: renamed)?.title, "QFT")
         XCTAssertThrowsError(try store.save("../evil", data: Data()))
+        XCTAssertEqual(store.allJSON().count, 1)
+        XCTAssertEqual(store.profileURL.lastPathComponent, "learner.json")
+        XCTAssertEqual(store.profileURL.deletingLastPathComponent().path, dir.deletingLastPathComponent().path)
     }
 }
 

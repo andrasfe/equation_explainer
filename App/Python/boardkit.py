@@ -44,14 +44,20 @@ def bra(bits: str | int, n: int | None = None) -> Matrix:
     return dag(ket(bits, n))
 
 
+def _as_ket(x):
+    """Accept a ket vector or a basis label: '0', '01', '+', 3."""
+    return ket(x) if isinstance(x, (str, int)) else x
+
+
 def braket(a, b):
-    """Inner product <a|b> of two kets (conjugates a)."""
+    """Inner product <a|b> (conjugates a). Kets or labels: braket('+', '0')."""
+    a, b = _as_ket(a), _as_ket(b)
     return simplify((dag(a) * b)[0])
 
 
 def ketbra(a, b):
-    """Outer product |a><b|."""
-    return a * dag(b)
+    """Outer product |a><b|. Kets or labels: ketbra('0', '1')."""
+    return _as_ket(a) * dag(_as_ket(b))
 
 
 inner, outer = braket, ketbra

@@ -75,7 +75,8 @@ struct BoardCommands: Commands {
             Divider()
             Button("Level-Set Now") { model.web.command("levelset") }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
-            Button("Where I Stand…") { model.web.command("profile") }
+            Button("Where I Stand & My Notes") { model.web.command("profile") }
+                .keyboardShortcut("l", modifiers: [.command, .option])
             Divider()
             Button("Model & Runtime…") { model.web.command("config") }
             Button("Open .env") { model.openEnv() }

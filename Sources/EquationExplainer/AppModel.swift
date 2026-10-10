@@ -179,7 +179,14 @@ final class AppModel: ObservableObject {
             return ["json": (try? String(contentsOf: store.profileURL, encoding: .utf8)) ?? ""]
 
         case "saveProfile":
-            try Data(str("json").utf8).write(to: store.profileURL, options: .atomic)
+            try BoardStore.writePrivate(Data(str("json").utf8), to: store.profileURL)
+            return ["ok": true]
+
+        case "loadNotes":
+            return ["json": (try? String(contentsOf: store.notesURL, encoding: .utf8)) ?? ""]
+
+        case "saveNotes":
+            try BoardStore.writePrivate(Data(str("json").utf8), to: store.notesURL)
             return ["ok": true]
 
         case "cancel":

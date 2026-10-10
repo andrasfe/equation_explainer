@@ -7,7 +7,11 @@ EE.selfTest = async function selfTest(opts = {}) {
   const app = EE.app, S = app.S, B = EE.bridge, sleep = EE.util.sleep;
   const report = { ok: true, steps: [], startedAt: new Date().toISOString() };
   const log = (message) => { console.log('[selftest] ' + message); return B.call('selftest', { event: 'log', message }).catch(() => {}); };
-  const snap = (name) => B.call('selftest', { event: 'snapshot', name }).catch((e) => log('snapshot failed: ' + e.message));
+  // a snapshot never finishes while the display sleeps; don't let that hang the run
+  const snap = (name) => Promise.race([
+    B.call('selftest', { event: 'snapshot', name }).catch((e) => log('snapshot failed: ' + e.message)),
+    sleep(15000).then(() => log(`snapshot ${name} skipped (no frame in 15 s; is the display asleep?)`)),
+  ]);
   const waitFor = async (pred, ms, what) => {
     const end = Date.now() + ms;
     while (Date.now() < end) { if (pred()) return; await sleep(250); }
@@ -114,10 +118,10 @@ EE.selfTest = async function selfTest(opts = {}) {
     assert(p && p.topics.length > 0, 'no profile topics');
     const rated = items.filter((i) => i.rated).length;
     if (!rated) assert(p.topics.every((t) => t.mastery <= 2), 'unrated topics must stay at 1: ' + p.topics.map((t) => t.name + ':' + t.mastery).join(', '));
-    app.showProfile();
+    app.toggleLearner(true);
     await settle();
     await snap('00-level-set-profile');
-    document.querySelector('#modal .chalk-btn:not(.primary)').click();
+    app.toggleLearner(false);
     return { level: p.overall.level, topics: p.topics.length, questions: p.meta.questions, rated: p.meta.rated, model: p.meta.model, sample: p.topics.slice(0, 4).map((t) => `${t.name}:${t.mastery}`) };
   });
 
@@ -151,6 +155,29 @@ EE.selfTest = async function selfTest(opts = {}) {
     return { rating: rootAnswer.rating, note: ce.querySelector('.poll-note').textContent };
   });
 
+  const NOTE = 'Self-test note: whenever a matrix product appears, work out one entry by hand.';
+  await step('a private note becomes a direction in the prompt', async () => {
+    const before = S.notes.length;
+    document.getElementById('btn-level').click();
+    await settle();
+    assert(!app.dom.learner.hidden, 'the where-you-stand panel did not open');
+    const staleBefore = app.evidenceState().hash;
+    app.dom.noteInput.value = NOTE;
+    document.getElementById('note-save').click();
+    await waitFor(() => S.notes.length === before + 1 && app.dom.noteInput.value === '', 5000, 'the note to be saved and the box cleared');
+    const stored = JSON.parse((await B.call('loadNotes')).json).notes;
+    assert(stored.some((n) => n.text === NOTE), 'the note was not saved to disk');
+    assert([...app.dom.noteList.querySelectorAll('.note-text')].some((x) => x.textContent === NOTE), 'the note is not listed');
+    const preview = app.dom.learnerPrompt.textContent;
+    assert(preview.includes("THE STUDENT'S OWN DIRECTIONS") && preview.includes(NOTE), 'the prompt preview does not show the note');
+    assert(app.evidenceState().hash !== staleBefore, 'a new note must make the profile stale');
+    document.getElementById('learner-prompt').open = true;
+    await settle();
+    await snap('01c-learner-panel');
+    app.toggleLearner(false);
+    return { notes: S.notes.length, previewChars: preview.length };
+  });
+
   await step('highlight an equation and ask a side question', async () => {
     const anchor = await selectAndOpenPopover(rootAnswer.id, pickEquation);
     await snap('02-popover');
@@ -162,6 +189,7 @@ EE.selfTest = async function selfTest(opts = {}) {
     const len = answerOk(lastCard(branch1.id));
     const ratedLine = (lastSystem().split('\n').find((l) => l.includes(': 3/10,')) || '');
     assert(ratedLine, 'the rating of the previous answer did not reach the next prompt');
+    assert(lastSystem().includes(NOTE), 'the private note did not reach the next prompt');
     app.drawOverlay();
     const loops = document.querySelectorAll('#overlay .chalk-loop').length;
     await snap('03-side-question');
@@ -267,9 +295,12 @@ EE.selfTest = async function selfTest(opts = {}) {
     const p = S.profile;
     assert(p.meta.updatedAt > before, 'profile not updated');
     assert(p.meta.rated >= 1, 'the new rating was not counted');
+    const lsPrompt = sent.filter((m) => m.purpose === 'levelset').pop().messages[1].content;
+    assert(lsPrompt.includes(NOTE), 'the level-set did not read the private notes');
+    assert(p.meta.notes >= 1, 'the profile does not record the notes it read');
     await settle();
     await snap('09-profile-after-ratings');
-    document.querySelector('#modal .chalk-btn:not(.primary)').click();
+    app.toggleLearner(false);
     return { level: p.overall.level, topics: p.topics.length, rated: p.meta.rated, top: p.topics.slice().sort((a, b) => b.mastery - a.mastery).slice(0, 3).map((t) => `${t.name}:${t.mastery}`) };
   });
 

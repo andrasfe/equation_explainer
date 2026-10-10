@@ -131,6 +131,19 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(store.profileURL.lastPathComponent, "learner.json")
         XCTAssertEqual(store.profileURL.deletingLastPathComponent().path, dir.deletingLastPathComponent().path)
     }
+
+    func testPrivateNotesLiveNextToBoardsOwnerOnly() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ee-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = BoardStore(dir: root.appendingPathComponent("Boards"))
+        XCTAssertEqual(store.notesURL.path, root.appendingPathComponent("learner-notes.json").path)
+        try BoardStore.writePrivate(Data(#"{"version":1,"notes":[]}"#.utf8), to: store.notesURL)
+        try BoardStore.writePrivate(Data(#"{"version":1,"notes":[{"id":"n1"}]}"#.utf8), to: store.notesURL)
+        let attrs = try FileManager.default.attributesOfItem(atPath: store.notesURL.path)
+        XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        XCTAssertTrue(try String(contentsOf: store.notesURL, encoding: .utf8).contains("n1"))
+        XCTAssertFalse(store.list().contains { $0.id == "learner-notes" }, "notes must not show up as a board")
+    }
 }
 
 final class PythonRunnerTests: XCTestCase {

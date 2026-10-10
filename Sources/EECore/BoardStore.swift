@@ -66,6 +66,15 @@ public final class BoardStore: @unchecked Sendable {
     /// The learner profile lives next to the Boards folder.
     public var profileURL: URL { dir.deletingLastPathComponent().appendingPathComponent("learner.json") }
 
+    /// The student's own notes (how they want things explained). Private: next to the Boards folder, never in the repo.
+    public var notesURL: URL { dir.deletingLastPathComponent().appendingPathComponent("learner-notes.json") }
+
+    /// Writes a personal file atomically and makes it readable by the owner only.
+    public static func writePrivate(_ data: Data, to url: URL) throws {
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
     public func load(_ id: String) throws -> Data {
         lock.lock(); defer { lock.unlock() }
         let u = try url(id)

@@ -493,5 +493,37 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .topic-recap.lo { color: var(--pink); } .topic-recap.mid { color: var(--yellow); } .topic-recap.hi { color: var(--green); }
 .warn { color: var(--yellow); }
 .chalk-btn:disabled { opacity: 0.45; cursor: default; }
-.modal-profile .topic-list { max-height: 30vh; }
-.modal-profile .lvl-summary { font-size: 15px; }
+
+/* ===================================================================== learner drawer */
+#learner {
+  position: fixed; right: 26px; top: 60px; z-index: 21; width: 430px; max-height: calc(100vh - 130px); overflow: auto;
+  padding: 10px 16px 16px; border-radius: 14px 18px 12px 16px;
+  background: #1a221d; border: 1.5px solid var(--chalk-faint); box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+  scrollbar-width: thin; scrollbar-color: var(--chalk-faint) transparent;
+}
+body.learner-open #board { margin-right: 446px; } /* the board gives way instead of hiding under the drawer */
+#learner .lvl-big { font-size: 26px; }
+#learner .lvl-summary { font-size: 14.5px; }
+#learner .topic-list { max-height: 30vh; margin: 8px 0; }
+#learner .topic-row { grid-template-columns: 1fr 70px 38px 66px; font-size: 13px; gap: 8px; }
+#learner .topic-row .mbar { width: 70px; }
+#learner .modal-actions { margin-top: 8px; }
+.learner-sec { margin-top: 14px; padding-top: 10px; border-top: 1.5px dashed var(--chalk-ghost); }
+.learner-h { color: var(--yellow); font-size: 17px; font-weight: normal; margin: 0 0 4px; }
+.note-input { display: block; width: 100%; box-sizing: border-box; resize: vertical; min-height: 64px; font-size: 14px; line-height: 1.45; padding: 6px 10px; margin-top: 6px; }
+.note-actions { display: flex; align-items: center; gap: 8px; margin: 6px 0 4px; }
+.note { padding: 7px 0 6px; border-bottom: 1px dashed var(--chalk-ghost); }
+.note.editing { opacity: 0.45; }
+.note-text { white-space: pre-wrap; font-size: 14px; line-height: 1.45; }
+.note-meta { display: flex; gap: 10px; align-items: center; margin-top: 2px; font-size: 12px; color: var(--chalk-faint); }
+.note-meta .link-btn { font-size: 12px; }
+.note-meta .link-btn.danger { color: var(--pink); }
+.learner-prompt > summary { cursor: pointer; list-style: none; }
+.learner-prompt > summary::before { content: "▸ "; color: var(--chalk-faint); }
+.learner-prompt[open] > summary::before { content: "▾ "; }
+.learner-prompt pre {
+  white-space: pre-wrap; word-break: break-word; font-family: var(--font-code); font-size: 11.5px; line-height: 1.5;
+  color: var(--chalk-dim); background: rgba(0,0,0,0.18); border: 1px solid var(--chalk-ghost); border-radius: 8px;
+  padding: 8px 10px; margin: 6px 0; max-height: 40vh; overflow: auto;
+}
+.learner-base summary { cursor: pointer; color: var(--chalk-faint); }

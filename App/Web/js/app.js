@@ -16,6 +16,9 @@
     config: null,
     library: new Map(), // boardId -> every saved board (the learner model looks across all of them)
     profile: null,      // learner profile from the last level-set
+    notes: [],          // the student's own directions [{id, text, createdAt, updatedAt}]; private, never in git
+    learnerOpen: false,
+    editingNote: null,
     ls: { running: false, error: null }, // level-set state
   });
 
@@ -143,7 +146,7 @@
       .filter((it) => it.answerId !== answerCardId && it.at > since)
       .sort((a, b) => b.at - a.at)
       .slice(0, 30);
-    return { profile: S.profile, items };
+    return { profile: S.profile, items, notes: S.notes };
   }
 
   function stream(board, threadId, card, mode) {
@@ -737,6 +740,7 @@
 
   function toggleOutline(force) {
     S.outlineOpen = typeof force === 'boolean' ? force : !S.outlineOpen;
+    if (S.outlineOpen && S.learnerOpen) toggleLearner(false);
     renderOutline();
   }
 
@@ -1152,7 +1156,7 @@
 
   function evidenceState() {
     const items = M.evidence(allBoards());
-    const hash = M.evidenceHash(items);
+    const hash = M.evidenceHash(items, S.notes);
     const stale = !!items.length && (!S.profile || !S.profile.meta || S.profile.meta.hash !== hash);
     return { items, hash, stale };
   }
@@ -1167,9 +1171,10 @@
   /** Holistic reassessment across every board, on the level-set model (OpenRouter by default). */
   function levelSet({ force = false, open = false } = {}) {
     if (S.ls.running) { if (open) showProfile(); return; }
-    const { messages, items } = M.levelSetMessages(allBoards(), S.profile);
+    const { messages, items } = M.levelSetMessages(allBoards(), S.profile, S.notes);
     if (!items.length) { if (open) showProfile(); return; }
-    const hash = M.evidenceHash(items);
+    const hash = M.evidenceHash(items, S.notes);
+    const notesRead = S.notes.length;
     if (!force && S.profile && S.profile.meta && S.profile.meta.hash === hash) return;
     S.ls = { running: true, error: null, startedAt: Date.now(), open };
     updateLevelChip();
@@ -1189,7 +1194,7 @@
         try { p = M.parseProfile(text); } catch (e) { fail(e.message); return; }
         p.meta = {
           updatedAt: Date.now(), model: model || '', hash, questions: items.length,
-          rated: items.filter((i) => i.rated).length, boards: new Set(items.map((i) => i.boardId)).size,
+          rated: items.filter((i) => i.rated).length, boards: new Set(items.map((i) => i.boardId)).size, notes: notesRead,
         };
         try { await B.call('saveProfile', { json: JSON.stringify(p, null, 2) }); } catch (e) { fail('could not save the profile: ' + e.message); return; }
         S.profile = p;
@@ -1209,14 +1214,27 @@
     dom.levelBtn.textContent = p ? `level ${p.overall.level}/10` : 'level ?';
     dom.levelBtn.classList.toggle('stale', stale && !S.ls.running);
     dom.levelBtn.title = (p ? `Where you stand (assessed ${EE.util.relTime(p.meta.updatedAt)})` : 'No assessment yet') +
-      (stale ? '\nNew questions or ratings since then' : '') + (S.ls.error ? '\n⚠ ' + S.ls.error : '');
+      (stale ? '\nNew questions, ratings or notes since then' : '') + (S.ls.error ? '\n⚠ ' + S.ls.error : '');
     dom.levelsetBtn.disabled = S.ls.running;
     dom.levelsetBtn.replaceChildren(S.ls.running ? el('span', { class: 'chalk-dots' }, 'assessing') : '⟳ level-set');
+    if (S.learnerOpen) renderLearner();
   }
 
-  const profileOpen = () => !!document.querySelector('#modal .modal-profile');
+  const profileOpen = () => S.learnerOpen;
+  const showProfile = () => toggleLearner(true);
 
-  function showProfile() {
+  /** The "where you stand" drawer: profile, the student's private notes, and what the model is told. */
+  function toggleLearner(force) {
+    S.learnerOpen = typeof force === 'boolean' ? force : !S.learnerOpen;
+    if (S.learnerOpen && S.outlineOpen) toggleOutline(false);
+    dom.learner.hidden = !S.learnerOpen;
+    document.body.classList.toggle('learner-open', S.learnerOpen);
+    dom.levelBtn.classList.toggle('on', S.learnerOpen);
+    if (S.learnerOpen) renderLearner();
+    if (S.board) requestAnimationFrame(() => revealColumn(S.board.openPath[S.board.openPath.length - 1], false));
+  }
+
+  function renderLearner() {
     const p = S.profile;
     const cfg = (S.config && S.config.levelset) || {};
     const { items, stale } = evidenceState();
@@ -1224,11 +1242,11 @@
     const tone = (m) => (m <= 3 ? 'lo' : m <= 6 ? 'mid' : 'hi');
     const bar = (m) => el('span', { class: 'mbar' }, el('span', { class: 'mfill ' + tone(m), style: `width:${m * 10}%` }));
     const recapTag = (m) => (m <= 3 ? 'recap' : m <= 6 ? 'reminder' : m <= 8 ? 'name only' : 'known');
-    const body = [el('h2', { class: 'chalk-title modal-title' }, 'Where you stand')];
+    const body = [];
     if (p) {
       body.push(el('div', { class: 'lvl-row' }, el('span', { class: 'lvl-big chalk-title' }, `${p.overall.level}/10`), bar(p.overall.level)));
       if (p.overall.summary) body.push(el('p', { class: 'lvl-summary' }, p.overall.summary));
-      if (p.overall.pitch) body.push(el('p', { class: 'muted small' }, 'How explanations are pitched: ' + p.overall.pitch));
+      if (p.overall.pitch) body.push(el('p', { class: 'muted small' }, 'Tutoring needs, how explanations are pitched: ' + p.overall.pitch));
       if (p.topics.length) {
         body.push(el('div', { class: 'topic-list' }, p.topics.slice().sort((a, b) => a.mastery - b.mastery).map((t) =>
           el('div', { class: 'topic-row', title: t.evidence || '' },
@@ -1239,9 +1257,9 @@
       if (p.reinforce.length) body.push(el('p', { class: 'small' }, el('span', { class: 'muted' }, 'reinforce when relevant: '), p.reinforce.join(' · ')));
       body.push(el('p', { class: 'muted small' },
         `Assessed ${EE.util.relTime(p.meta.updatedAt)}${p.meta.model ? ' by ' + p.meta.model : ''} from ${p.meta.questions} questions on ${p.meta.boards} board${p.meta.boards === 1 ? '' : 's'} (${p.meta.rated} rated, unrated ones count as 1).`));
-      if (stale) body.push(el('p', { class: 'small warn' }, 'There are new questions or ratings since then. They already shape new explanations; a level-set folds them into the profile.'));
+      if (stale) body.push(el('p', { class: 'small warn' }, 'New questions, ratings or notes since then. They already shape new explanations; a level-set folds them into the profile.'));
     } else {
-      body.push(el('p', {}, items.length
+      body.push(el('p', { class: 'small' }, items.length
         ? `No assessment yet. ${items.length} earlier question${items.length === 1 ? '' : 's'} (${rated} rated; unrated ones count as 1) will be assessed.`
         : 'No assessment yet. Ask a few questions and rate how well each answer sank in.'));
     }
@@ -1249,11 +1267,74 @@
     const problems = [S.ls.error, ...(cfg.problems || [])].filter((x, i, a) => x && a.indexOf(x) === i);
     if (problems.length) body.push(el('div', { class: 'cfg-problems' }, problems.map((x) => el('div', {}, '⚠ ' + x))));
     body.push(el('p', { class: 'muted small' }, `Level-set model: ${cfg.provider || 'OpenRouter'} · ${cfg.model || 'openai/gpt-5.6-sol-pro'} (LEVELSET_MODEL in .env). It runs on its own whenever you start a new board.`));
-    let close;
-    const run = el('button', { class: 'chalk-btn primary', onclick: () => levelSet({ force: true, open: true }) }, S.ls.running ? 'assessing…' : 'level-set now');
+    const run = el('button', { class: 'chalk-btn primary small', onclick: () => levelSet({ force: true, open: true }) }, S.ls.running ? 'assessing…' : 'level-set now');
     if (S.ls.running || !items.length) run.disabled = true;
-    body.push(el('div', { class: 'modal-actions' }, run, el('button', { class: 'chalk-btn', onclick: () => close() }, 'close')));
-    close = modal(el('div', {}, body), 'modal-wide modal-profile');
+    body.push(el('div', { class: 'modal-actions' }, run));
+    dom.learnerProfile.replaceChildren(...body);
+
+    const notes = S.notes.slice().sort((a, b) => b.createdAt - a.createdAt);
+    dom.noteList.replaceChildren(...(notes.length ? notes.map((n) => el('div', { class: 'note' + (S.editingNote === n.id ? ' editing' : ''), 'data-note': n.id },
+      el('div', { class: 'note-text' }, n.text),
+      el('div', { class: 'note-meta' },
+        el('span', {}, new Date(n.createdAt).toLocaleDateString() + (n.updatedAt > n.createdAt + 1000 ? ' · edited' : '')),
+        el('button', { class: 'link-btn', onclick: () => editNote(n.id) }, 'edit'),
+        el('button', { class: 'link-btn danger', onclick: () => removeNote(n.id) }, 'remove'))))
+      : [el('p', { class: 'muted small' }, 'No notes yet.')]));
+
+    const ctx = learnerContext(S.board || M.newBoard(), null);
+    dom.learnerPrompt.textContent = M.learnerSection(ctx).trim();
+    dom.learnerBase.textContent = M.SYSTEM;
+  }
+
+  // ------------------------------------------------------------ the student's private notes
+  async function saveNotes() {
+    try {
+      await B.call('saveNotes', { json: JSON.stringify({ version: 1, notes: S.notes }, null, 2) });
+      return true;
+    } catch (e) {
+      toast('Could not save your notes: ' + e.message, 'error');
+      return false;
+    }
+  }
+
+  async function submitNote() {
+    const text = dom.noteInput.value.trim();
+    if (!text) { dom.noteInput.focus(); return; }
+    const now = Date.now();
+    const n = S.editingNote && S.notes.find((x) => x.id === S.editingNote);
+    if (n) { n.text = text; n.updatedAt = now; } else S.notes.push({ id: uid('n'), text, createdAt: now, updatedAt: now });
+    if (!(await saveNotes())) return;
+    toast(n ? 'Note updated. The next explanation follows it.' : 'Noted. The next explanation follows it.');
+    resetNoteInput();
+    updateLevelChip();
+  }
+
+  function editNote(id) {
+    const n = S.notes.find((x) => x.id === id);
+    if (!n) return;
+    S.editingNote = id;
+    dom.noteInput.value = n.text;
+    dom.noteSave.textContent = 'save note';
+    dom.noteCancel.hidden = false;
+    renderLearner();
+    dom.noteInput.focus();
+  }
+
+  function resetNoteInput() {
+    S.editingNote = null;
+    dom.noteInput.value = '';
+    dom.noteSave.textContent = 'add note';
+    dom.noteCancel.hidden = true;
+    if (S.learnerOpen) renderLearner();
+  }
+
+  async function removeNote(id) {
+    const n = S.notes.find((x) => x.id === id);
+    if (!n || !(await confirmDialog(`Remove this note? “${truncate(n.text, 160)}”`, 'Remove'))) return;
+    S.notes = S.notes.filter((x) => x.id !== id);
+    if (S.editingNote === id) resetNoteInput();
+    await saveNotes();
+    updateLevelChip();
   }
 
   // ------------------------------------------------------------ events
@@ -1382,6 +1463,8 @@
       outline: $('outline'), outlineTree: $('outline-tree'), popover: $('popover'), popQuote: $('pop-quote'),
       popInput: $('pop-input'), popChips: $('pop-chips'), modal: $('modal'), toast: $('toast'),
       status: $('status'), statusText: $('status-text'), levelBtn: $('btn-level'), levelsetBtn: $('btn-levelset'),
+      learner: $('learner'), learnerProfile: $('learner-profile'), noteList: $('note-list'), noteInput: $('note-input'),
+      noteSave: $('note-save'), noteCancel: $('note-cancel'), learnerPrompt: $('learner-prompt-text'), learnerBase: $('learner-base-text'),
     });
     document.addEventListener('click', onClick);
     dom.backBtn.addEventListener('click', closeAll);
@@ -1392,7 +1475,16 @@
     $('btn-zoom-in').addEventListener('click', () => zoom('in'));
     $('btn-zoom-out').addEventListener('click', () => zoom('out'));
     dom.status.addEventListener('click', showConfig);
-    dom.levelBtn.addEventListener('click', showProfile);
+    dom.levelBtn.addEventListener('click', () => toggleLearner());
+    $('learner-close').addEventListener('click', () => toggleLearner(false));
+    dom.noteSave.addEventListener('click', submitNote);
+    dom.noteCancel.addEventListener('click', resetNoteInput);
+    dom.noteInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) { e.preventDefault(); submitNote(); }
+    });
+    const promptBox = $('learner-prompt');
+    try { promptBox.open = localStorage.getItem('ee.promptOpen') === '1'; } catch (e) { /* ignore */ }
+    promptBox.addEventListener('toggle', () => { try { localStorage.setItem('ee.promptOpen', promptBox.open ? '1' : '0'); } catch (e) { /* ignore */ } });
     dom.levelsetBtn.addEventListener('click', () => levelSet({ force: true, open: true }));
     $('btn-new').addEventListener('click', newBoard);
 
@@ -1427,6 +1519,7 @@
       if (!dom.popover.hidden) { hidePopover(); return; }
       const a = document.activeElement;
       if (a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT') && a.value) { a.blur(); return; }
+      if (S.learnerOpen) { toggleLearner(false); return; }
       if (S.outlineOpen) { toggleOutline(false); return; }
       closeLast();
     });
@@ -1455,7 +1548,7 @@
       const cmds = {
         closeLast, closeAll, toggleMap: () => toggleOutline(), insertMatrix: () => openMatrix(),
         focus: () => focusComposer(), zoomChanged: () => setTimeout(scheduleOverlay, 50), config: showConfig,
-        levelset: () => levelSet({ force: true, open: true }), profile: showProfile,
+        levelset: () => levelSet({ force: true, open: true }), profile: () => toggleLearner(),
       };
       if (cmds[name]) cmds[name]();
     },
@@ -1491,6 +1584,11 @@
       const r = await B.call('loadProfile');
       if (r && r.json) S.profile = JSON.parse(r.json);
     } catch (e) { /* no profile yet */ }
+    try {
+      const r = await B.call('loadNotes');
+      const notes = r && r.json ? JSON.parse(r.json).notes : [];
+      if (Array.isArray(notes)) S.notes = notes.filter((n) => n && typeof n.text === 'string' && n.text.trim());
+    } catch (e) { /* no notes yet */ }
     if (init.board) {
       try { setBoard(JSON.parse(init.board), true); } catch (e) { newBoard(); }
     } else newBoard();
@@ -1501,7 +1599,7 @@
   EE.app = {
     S, cols, dom, send, askAbout, openThread, closeThread, closeAll, closeLast, runCode, newBoard, setBoard,
     selectionToAnchor, showPopover, hidePopover, submitPopover, render, refreshConfig, toggleOutline, openMatrix,
-    drawOverlay, findCardEl, levelSet, showProfile, learnerContext, evidenceState,
+    drawOverlay, findCardEl, levelSet, showProfile, toggleLearner, learnerContext, evidenceState, submitNote, removeNote,
   };
   document.addEventListener('DOMContentLoaded', boot);
 })();

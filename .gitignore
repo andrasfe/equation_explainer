@@ -13,3 +13,8 @@ dev/data/
 __pycache__/
 *.pyc
 .DS_Store
+
+# personal learner data lives in ~/Library/Application Support/EquationExplainer; never commit a copy
+Boards/
+learner.json
+learner-notes.json

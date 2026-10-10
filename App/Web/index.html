@@ -16,7 +16,7 @@
       <nav id="crumbs" aria-label="Where you are"></nav>
       <span class="spacer"></span>
       <button id="btn-back" class="top-btn wide" title="Close every side question and go back to the original (⇧⌘⌫)">⟲ back to the original</button>
-      <button id="btn-level" class="top-btn level-chip" title="Where you stand">level ?</button>
+      <button id="btn-level" class="top-btn level-chip" title="Where you stand (⌥⌘L)">level ?</button>
       <button id="btn-levelset" class="top-btn" title="Level-set: reassess what you know across all boards (⇧⌘L)">⟳ level-set</button>
       <button id="btn-map" class="top-btn" title="Board map: every side question (⇧⌘M)">⌘ map</button>
       <button id="btn-font" class="top-btn" title="Chalk font">Aa</button>
@@ -40,6 +40,24 @@
 <aside id="outline" hidden>
   <div class="outline-head"><span class="chalk-title">board map</span><button id="outline-close" class="icon-btn">✕</button></div>
   <div id="outline-tree"></div>
+</aside>
+
+<aside id="learner" hidden aria-label="Where you stand">
+  <div class="outline-head"><span class="chalk-title">where you stand</span><button id="learner-close" class="icon-btn" title="Close (Esc)">✕</button></div>
+  <div id="learner-profile"></div>
+  <section class="learner-sec">
+    <h3 class="chalk-title learner-h">my notes</h3>
+    <p class="muted small">Private: kept only on this Mac, never in git. Every note goes to the model with each explanation as a direction on how to present things, and the level-set reads them too. Newer notes win.</p>
+    <textarea id="note-input" class="chalk-input note-input" rows="3" placeholder="e.g. Show me the Bloch-sphere picture before the algebra."></textarea>
+    <div class="note-actions"><span class="muted small">⌘↩ to save</span><span class="spacer"></span><button id="note-cancel" class="chalk-btn small" hidden>cancel</button><button id="note-save" class="chalk-btn small primary">add note</button></div>
+    <div id="note-list"></div>
+  </section>
+  <details id="learner-prompt" class="learner-sec learner-prompt">
+    <summary class="learner-h chalk-title">what the model is told about you</summary>
+    <p class="muted small">Added to the system prompt of the next explanation, exactly as below.</p>
+    <pre id="learner-prompt-text"></pre>
+    <details class="learner-base"><summary class="small">and the base tutoring rules before it</summary><pre id="learner-base-text"></pre></details>
+  </details>
 </aside>
 
 <div id="popover" hidden>

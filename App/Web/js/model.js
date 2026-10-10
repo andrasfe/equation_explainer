@@ -63,10 +63,23 @@ COMPUTE MODE. The student wants the calculation done for them. Reply with:
     return 'treat as known';
   }
 
+  /** The student's notes as prompt lines, oldest first (so the newest has the last word), newest kept if over budget. */
+  function notesLines(notes, budget = 4000) {
+    const out = [];
+    for (const n of (notes || []).slice().sort((a, b) => b.createdAt - a.createdAt)) {
+      const text = String(n.text || '').trim().replace(/\s*\n\s*/g, ' ');
+      if (!text) continue;
+      budget -= text.length;
+      if (budget < 0 && out.length) break;
+      out.unshift(`- (${new Date(n.createdAt).toISOString().slice(0, 10)}) ${text}`);
+    }
+    return out;
+  }
+
   /** The system-prompt section that adapts explanations to where the student stands. */
   function learnerSection(learner) {
     if (!learner) return '';
-    const { profile, items } = learner;
+    const { profile, items, notes } = learner;
     const L = ['', '', 'THE STUDENT. Adapt the level of this explanation to where the student stands.',
       'After every explanation the student rates "did this sink in?" from 1 (not at all) to 10 (fully). Unrated explanations count as 1.'];
     if (profile) {
@@ -89,7 +102,13 @@ COMPUTE MODE. The student wants the calculation done for them. Reply with:
         L.push(`- "${EE.util.truncate(EE.util.texToText(it.q), 140)}"${where}: ${it.rating}/10${it.rated ? '' : ' (unrated)'}, ${recapRule(it.rating)}`);
       }
     }
-    L.push('Rule: when this explanation depends on a topic listed above, scale the recap to its score. The lower the score, the more you recap, always as a condensed higher-level refresher rather than a repeat. The higher the score, the less recap; at 9-10 assume it is known. Never mention these scores or this profile to the student.');
+    L.push('Rule: when this explanation depends on a topic listed above, scale the recap to its score. The lower the score, the more you recap, always as a condensed higher-level refresher rather than a repeat. The higher the score, the less recap; at 9-10 assume it is known.');
+    const own = notesLines(notes);
+    if (own.length) {
+      L.push('', "THE STUDENT'S OWN DIRECTIONS. The student wrote these notes about their background and how they want things presented. Follow them in every explanation. They take priority over the profile, the scores and the recap rule above; where two notes disagree, the newer one wins.");
+      L.push(...own);
+    }
+    L.push('Never mention these scores, this profile or these notes to the student; just teach accordingly.');
     return L.join('\n');
   }
 
@@ -116,7 +135,9 @@ COMPUTE MODE. The student wants the calculation done for them. Reply with:
     return out;
   }
 
-  const evidenceHash = (items) => EE.util.hash(items.map((i) => `${i.cardId}:${i.rated ? i.rating : 'u'}`).join('|')).toString(36);
+  /** Fingerprint of everything a level-set reads; a new rating or note makes the profile stale. */
+  const evidenceHash = (items, notes) => EE.util.hash(items.map((i) => `${i.cardId}:${i.rated ? i.rating : 'u'}`).join('|') +
+    ((notes || []).length ? '#' + notes.map((n) => `${n.id}:${n.text}`).join('|') : '')).toString(36);
 
   const LEVELSET_SYSTEM = String.raw`You assess a student's understanding for an adaptive tutoring app (a "blackboard") covering mathematics, physics and quantum computing. You receive every question the student asked, grouped by board (one study session each), including side questions they asked about highlighted parts of explanations, and the student's own rating of each explanation: "did this sink in?" from 1 (not at all) to 10 (fully). Unrated explanations count as 1, because the student has not confirmed understanding.
 
@@ -128,11 +149,13 @@ Build a learner profile:
 - guidance: up to 6 short imperative instructions for the tutor that writes the explanations.
 If a previous profile is given, update it with the new evidence instead of starting over.
 
+The student may also have written notes about their own background and how they want things presented. They are authoritative: overall.pitch and guidance must carry them out and never contradict them (where two notes disagree, the newer one wins), and a self-declared weak area must not be rated high without strong sink-in ratings to back it.
+
 Respond with ONLY a JSON object, no prose and no code fences, of this shape:
 {"overall":{"level":3,"summary":"...","pitch":"..."},"topics":[{"name":"...","mastery":2,"evidence":"..."}],"reinforce":["..."],"guidance":["..."]}`;
 
   /** Chat messages for a holistic level-set across all boards. */
-  function levelSetMessages(boards, previous) {
+  function levelSetMessages(boards, previous, notes) {
     const items = evidence(boards);
     const byBoard = new Map();
     for (const it of items) {
@@ -153,7 +176,9 @@ Respond with ONLY a JSON object, no prose and no code fences, of this shape:
       }
     }
     const prev = previous ? JSON.stringify({ overall: previous.overall, topics: previous.topics, reinforce: previous.reinforce, guidance: previous.guidance }) : '(none)';
-    const user = `Previous profile: ${prev}\n\nEvidence (${items.length} answered questions, ${items.filter((i) => i.rated).length} rated):${lines.join('\n')}\n\nReturn the JSON profile now.`;
+    const own = notesLines(notes, 8000);
+    const said = own.length ? `\n\nThe student's own notes (oldest first):\n${own.join('\n')}` : '';
+    const user = `Previous profile: ${prev}${said}\n\nEvidence (${items.length} answered questions, ${items.filter((i) => i.rated).length} rated):${lines.join('\n')}\n\nReturn the JSON profile now.`;
     return { messages: [{ role: 'system', content: LEVELSET_SYSTEM }, { role: 'user', content: user }], items };
   }
 
@@ -295,7 +320,7 @@ Respond with ONLY a JSON object, no prose and no code fences, of this shape:
   }
 
   /** Messages for answering in `threadId`, stopping before `beforeCardId`.
-   *  `learner` = {profile, items} adapts the level; see learnerSection(). */
+   *  `learner` = {profile, items, notes} adapts the level; see learnerSection(). */
   function buildMessages(board, threadId, beforeCardId, mode, learner) {
     const path = pathTo(board, threadId);
     const msgs = [];
@@ -337,6 +362,6 @@ Respond with ONLY a JSON object, no prose and no code fences, of this shape:
 
   return {
     newBoard, newThread, pathTo, children, descendants, branchesOn, findCard, countBranches,
-    buildMessages, SYSTEM, wantsCode, repairJson, recapRule, learnerSection, evidence, evidenceHash, levelSetMessages, parseProfile,
+    buildMessages, SYSTEM, wantsCode, repairJson, recapRule, learnerSection, notesLines, evidence, evidenceHash, levelSetMessages, parseProfile,
   };
 })();

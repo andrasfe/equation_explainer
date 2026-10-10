@@ -24,7 +24,14 @@ is saved with all of its branches, and the circled spots stay marked so you can 
   - Each explanation's system prompt includes the profile plus everything asked since the last
     level-set, with its rating, so a rating counts on the very next question.
   - Recap scales with the score. 1–3 gets a condensed, higher-level refresher, 4–6 a brief reminder,
-    7–8 a name-check, and 9–10 is treated as known. **level n/10** shows the profile.
+    7–8 a name-check, and 9–10 is treated as known.
+  - **level n/10** (⌥⌘L) opens the *where you stand* panel. It shows your level, tutoring needs and
+    topic mastery, plus exactly what the model is told about you (the learner part of the system
+    prompt, with the base tutoring rules underneath).
+  - **My notes**, in the same panel, are your own directions, for example "show me the Bloch-sphere
+    picture before the algebra". Every note goes into the system prompt of
+    each explanation and outranks the profile and the recap rules; a newer note beats an older one.
+    The level-set reads them too, and a new note marks the profile for reassessment.
 - **No code unless you ask.** Answers stick to mathematics. Code appears only when your question asks
   for code, Python, a script or a plot, or when you use *compute* mode.
 - **Computation.**
@@ -61,7 +68,8 @@ make run                  # builds "build/Equation Explainer.app" and opens it
 The first ▶ Execute creates a managed virtualenv in `~/Library/Application Support/EquationExplainer/pyenv`.
 This takes about a minute and happens only once. Boards are JSON files in
 `~/Library/Application Support/EquationExplainer/Boards` (**Board ▸ Reveal Boards Folder**).
-The learner profile sits next to that folder in `learner.json`.
+The learner profile (`learner.json`) and your notes (`learner-notes.json`) sit next to that folder. Both are
+written owner-only (0600), never live in the repository, and are git-ignored as a safety net.
 
 ## Keys
 
@@ -72,7 +80,7 @@ The learner profile sits next to that folder in `learner.json`.
 | `Esc` or `⌘[` | close the rightmost side question |
 | `⇧⌘⌫` | back to the original (close all) |
 | `⇧⌘M` / `⌥⌘M` | board map / insert matrix |
-| `⇧⌘L` | level-set now |
+| `⇧⌘L` / `⌥⌘L` | level-set now / where you stand and my notes (`⌘Enter` saves a note) |
 | `Enter` / `Shift+Enter` | write / new line (`⌘Enter` runs in python mode) |
 
 ## Development

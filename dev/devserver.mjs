@@ -16,6 +16,7 @@ const KIT = path.join(ROOT, 'App', 'Python');
 const DATA_ROOT = process.env.EE_DEV_DATA || path.join(ROOT, 'dev', 'data');
 const DATA = path.join(DATA_ROOT, 'boards');
 const PROFILE = path.join(DATA_ROOT, 'learner.json');
+const NOTES = path.join(DATA_ROOT, 'learner-notes.json');
 const PORT = Number(process.argv[2] || process.env.PORT || 5178);
 const VENV_PY = path.join(os.homedir(), 'Library', 'Application Support', 'EquationExplainer', 'pyenv', 'bin', 'python');
 fs.mkdirSync(DATA, { recursive: true });
@@ -121,7 +122,12 @@ async function bridge(msg) {
     case 'loadProfile':
       return { json: fs.existsSync(PROFILE) ? fs.readFileSync(PROFILE, 'utf8') : '' };
     case 'saveProfile':
-      fs.writeFileSync(PROFILE, msg.json);
+      fs.writeFileSync(PROFILE, msg.json, { mode: 0o600 });
+      return { ok: true };
+    case 'loadNotes':
+      return { json: fs.existsSync(NOTES) ? fs.readFileSync(NOTES, 'utf8') : '' };
+    case 'saveNotes':
+      fs.writeFileSync(NOTES, msg.json, { mode: 0o600 });
       return { ok: true };
     case 'python': return runPython(msg.id, msg.code);
     case 'cancel': { const p = running.get(msg.id); if (p) p.kill('SIGTERM'); return { ok: true }; }

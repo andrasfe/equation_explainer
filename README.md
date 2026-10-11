@@ -109,3 +109,19 @@ Layout:
 - `Sources/EquationExplainer` is the SwiftUI shell, the WKWebView host and the JS bridge.
 - `App/Web` is the blackboard UI in plain JS, with vendored KaTeX, marked, DOMPurify and highlight.js.
 - `App/Python` holds the cell runner, `boardkit` and the matplotlib chalk style.
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this
+project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
+additional terms or conditions.
+
+The vendored libraries in `App/Web/vendor` keep their own licenses: KaTeX and marked (MIT),
+DOMPurify (Apache-2.0 or MPL-2.0) and highlight.js (BSD-3-Clause).

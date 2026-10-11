@@ -25,7 +25,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.
   '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.svg': 'image/svg+xml', '.json': 'application/json' };
 
 function loadEnv() {
-  const file = path.join(ROOT, '.env');
+  const file = process.env.EE_ENV_FILE || path.join(ROOT, '.env'); // same override as the app
   const vals = { ...process.env };
   if (fs.existsSync(file)) {
     for (let line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {

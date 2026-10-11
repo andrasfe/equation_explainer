@@ -1103,12 +1103,16 @@
   }
 
   async function refreshConfig() {
+    const lsProblems = (c) => (c && c.levelset && c.levelset.problems) || [];
+    const before = lsProblems(S.config);
     try {
       S.config = await B.call('config');
     } catch (e) {
       S.config = { problems: [e.message] };
     }
     const c = S.config;
+    // a level-set warning that came from .env goes away once .env is fixed
+    if (S.ls.error && before.includes(S.ls.error) && !lsProblems(c).includes(S.ls.error)) S.ls.error = null;
     const bad = (c.problems || []).length > 0;
     dom.status.classList.toggle('bad', bad);
     dom.statusText.textContent = c.provider ? `${c.provider} · ${truncate(c.model || 'auto', 28)}` : 'no model';
@@ -1162,9 +1166,11 @@
   }
 
   async function maybeAutoLevelSet() {
-    if (!S.config) await refreshConfig();
+    await refreshConfig(); // .env may have changed since launch (a key added, say)
     const problems = (S.config && S.config.levelset && S.config.levelset.problems) || [];
     if (problems.length) { S.ls.error = problems[0]; updateLevelChip(); return; }
+    if (!S.ls.running) S.ls.error = null;
+    updateLevelChip();
     levelSet({ force: false });
   }
 
@@ -1178,6 +1184,7 @@
     if (!force && S.profile && S.profile.meta && S.profile.meta.hash === hash) return;
     S.ls = { running: true, error: null, startedAt: Date.now(), open };
     updateLevelChip();
+    refreshConfig().then(updateLevelChip);
     if (open) showProfile();
     let text = '';
     const fail = (msg) => {
@@ -1230,7 +1237,10 @@
     dom.learner.hidden = !S.learnerOpen;
     document.body.classList.toggle('learner-open', S.learnerOpen);
     dom.levelBtn.classList.toggle('on', S.learnerOpen);
-    if (S.learnerOpen) renderLearner();
+    if (S.learnerOpen) {
+      renderLearner();
+      refreshConfig().then(updateLevelChip);
+    }
     if (S.board) requestAnimationFrame(() => revealColumn(S.board.openPath[S.board.openPath.length - 1], false));
   }
 

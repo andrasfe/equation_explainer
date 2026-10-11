@@ -9,6 +9,8 @@ highlight again and drill deeper. When you're done, close the side columns (`Esc
 breadcrumb, or the eraser on the chalk ledge) and you're back at the original equation. Every board
 is saved with all of its branches, and the circled spots stay marked so you can reopen any branch later.
 
+![A board on kernel ridge regression: the original question, a side question on the circled formula, a deeper one beside it, and the board summary on the right](docs/screenshot.jpg)
+
 ## Features
 
 - **Lateral drill-down.** Each side question is a column anchored to the exact text or formula you

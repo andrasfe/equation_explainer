@@ -32,6 +32,15 @@ is saved with all of its branches, and the circled spots stay marked so you can 
     picture before the algebra". Every note goes into the system prompt of
     each explanation and outranks the profile and the recap rules; a newer note beats an older one.
     The level-set reads them too, and a new note marks the profile for reassessment.
+- **Board summary.** **∑ summary** (⇧⌘S) writes a short, high-level recap of the board to reinforce
+  what you learned. It covers the main question, its follow-ups and every side question, however deep.
+  - Each key idea links back to the questions where it came up. A click opens that column and lights up
+    the question; any side question the model forgot to link is listed under *also explored*.
+  - It ends with two or three *check yourself* questions. Ideas you rated low get a little more room,
+    and your notes apply here too.
+  - The summary is saved inside the board. **↻ regenerate** writes a new one, and the old one stays
+    until the new one is finished. A dot on the button means you have asked more since.
+  - It is written by the board's model (`LLM_PROVIDER`).
 - **No code unless you ask.** Answers stick to mathematics. Code appears only when your question asks
   for code, Python, a script or a plot, or when you use *compute* mode.
 - **Computation.**
@@ -80,6 +89,7 @@ written owner-only (0600), never live in the repository, and are git-ignored as 
 | `Esc` or `⌘[` | close the rightmost side question |
 | `⇧⌘⌫` | back to the original (close all) |
 | `⇧⌘M` / `⌥⌘M` | board map / insert matrix |
+| `⇧⌘S` | board summary |
 | `⇧⌘L` / `⌥⌘L` | level-set now / where you stand and my notes (`⌘Enter` saves a note) |
 | `Enter` / `Shift+Enter` | write / new line (`⌘Enter` runs in python mode) |
 

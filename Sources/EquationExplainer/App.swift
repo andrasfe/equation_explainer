@@ -67,6 +67,8 @@ struct BoardCommands: Commands {
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
             Button("Board Map") { model.web.command("toggleMap") }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
+            Button("Board Summary") { model.web.command("summary") }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
             Divider()
             Button("Insert Matrix…") { model.web.command("insertMatrix") }
                 .keyboardShortcut("m", modifiers: [.command, .option])

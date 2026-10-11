@@ -217,6 +217,97 @@ Respond with ONLY a JSON object, no prose and no code fences, of this shape:
     };
   }
 
+  // ------------------------------------------------------------------ board summary
+  const SUMMARY_SYSTEM = String.raw`You write a short study summary of one session on a blackboard tutoring app for mathematics, physics and quantum computing. A session is a tree: the main question and its follow-ups, plus side questions the student asked about highlighted parts of an explanation, sometimes several levels deep. Every question carries a tag such as [Q3].
+
+The summary helps the student reinforce what they learned, so keep it high level: the essence of each idea and how the ideas connect, not the derivations. Write Markdown with all mathematics in LaTeX ($...$ inline, $$...$$ display). Use at most one short display equation per idea, and only where the equation is the idea.
+
+Use exactly these sections:
+### The big picture
+Two or three sentences: what the main question asked, and the answer in essence.
+### Key ideas
+Three to eight bullets in a logical order, which need not be the order asked. Each bullet starts with the idea's name in bold, then one or two sentences on its essence. Fold every follow-up and side question into the idea it served.
+### Check yourself
+Two or three short questions the student should now be able to answer. Do not answer them.
+
+Links: point back to the questions with Markdown links whose target is the tag, for example [why the phase lands on the control](#Q4). Link the words that name the idea, or add a short link at the end of the bullet. Use only tags from the session and link every side question at least once. Always write a link as [a few words](#Q4); never write a bare tag such as [Q4] or (Q1, Q5).
+
+After each explanation the student rated "did this sink in?" from 1 to 10; unrated counts as 1. Give ideas from low-rated explanations a little more room and a plain-language restatement; for ideas rated 8 or more, one line is enough. Never mention ratings, tags or the app.
+
+No code. No preamble and no closing remarks. Stay under about 350 words.`;
+
+  /** An answer squeezed for the summary prompt: code out, and its "Key idea" line kept even when the rest is cut. */
+  function condense(body, cap) {
+    const text = body.replace(/```[\s\S]*?```/g, ' [code] ').replace(/\s+/g, ' ').trim();
+    if (text.length <= cap) return text;
+    const key = ((body.match(/\*\*Key idea[^\n]*/i) || [''])[0]).replace(/\s+/g, ' ').trim();
+    return EE.util.truncate(text, Math.max(240, cap - key.length - 3)) + (key ? ' … ' + key : '');
+  }
+
+  /** Every question on a board, depth first in board order: [{tag, threadId, cardId, side}]. */
+  function boardQuestions(board) {
+    const out = [];
+    const seen = new Set();
+    const walk = (t, depth, emit) => {
+      if (!t || seen.has(t.id)) return;
+      seen.add(t.id);
+      t.cards.forEach((card, k) => {
+        emit(t, card, k, depth);
+        for (const b of branchesOn(board, card.id)) walk(b, depth + 1, emit);
+      });
+    };
+    const visit = (emit) => {
+      seen.clear();
+      walk(board.threads[board.rootThreadId || 'root'], 0, emit);
+      // side questions whose highlighted card is gone still belong to the board
+      for (const t of Object.values(board.threads).sort((a, b) => a.createdAt - b.createdAt)) if (t.parentId) walk(t, 1, emit);
+    };
+    visit((t, card, k) => {
+      if (card.role === 'user') out.push({ tag: 'Q' + (out.length + 1), threadId: t.id, cardId: card.id, side: k === 0 && !!t.parentId });
+    });
+    return { list: out, visit };
+  }
+
+  const answerBody = (card) => (card.role === 'assistant' && card.status !== 'error' && card.status !== 'streaming'
+    ? EE.render.splitThink(card.text).body.trim() : '');
+
+  /** Chat messages for a study summary of one board, plus the tag -> question map its links point to. */
+  function summaryMessages(board, notes) {
+    const { list, visit } = boardQuestions(board);
+    const byCard = new Map(list.map((q) => [q.cardId, q]));
+    let answers = 0;
+    visit((t, card) => { if (answerBody(card)) answers++; });
+    const cap = Math.min(4000, Math.max(500, Math.floor(36000 / Math.max(1, answers))));
+    const { truncate, clean, texToText } = EE.util;
+    const lines = [`BOARD "${texToText(board.title) || 'Untitled'}"`, ''];
+    visit((t, card, k, depth) => {
+      const pad = '  '.repeat(depth);
+      if (card.role === 'user') {
+        const q = byCard.get(card.id);
+        const what = q.side ? `side question about "${truncate(clean((t.anchor && (t.anchor.llmText || t.anchor.quote)) || ''), 160)}"`
+          : !t.parentId && k === 0 ? 'main question' : 'follow-up';
+        lines.push(`${pad}[${q.tag}] ${what}: ${truncate(card.text, 600)}`);
+      } else if (card.role === 'assistant') {
+        const body = answerBody(card);
+        if (!body) return;
+        const run = card.runs && card.runs[0];
+        lines.push(`${pad}answer (${card.rating != null ? `sink-in ${card.rating}/10` : 'unrated'}): ${condense(body, cap)}` +
+          (run && run.stdout ? ` [its code ran and printed: ${truncate(run.stdout, 240)}]` : ''));
+      } else if (card.role === 'code') {
+        const run = card.runs && card.runs[0];
+        lines.push(`${pad}(the student ran their own Python: ${truncate(card.code, 200)}${run && run.stdout ? ` -> ${truncate(run.stdout, 200)}` : ''})`);
+      }
+    });
+    const own = notesLines(notes);
+    const system = SUMMARY_SYSTEM + (own.length
+      ? "\n\nTHE STUDENT'S OWN DIRECTIONS on how they want things presented (oldest first; the newer note wins). Follow them where they apply to a summary, while keeping it short:\n" + own.join('\n')
+      : '');
+    const user = `${lines.join('\n')}\n\nWrite the summary now. The tags are ${list.map((q) => q.tag).join(', ')}.`;
+    const refs = {};
+    for (const q of list) refs[q.tag] = { threadId: q.threadId, cardId: q.cardId, side: q.side };
+    return { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], refs, questions: list.length, sides: list.filter((q) => q.side).length };
+  }
+
   const CONTEXT_BUDGET = 48000; // characters of conversation history sent to the model
 
   function newBoard() {
@@ -363,5 +454,6 @@ Respond with ONLY a JSON object, no prose and no code fences, of this shape:
   return {
     newBoard, newThread, pathTo, children, descendants, branchesOn, findCard, countBranches,
     buildMessages, SYSTEM, wantsCode, repairJson, recapRule, learnerSection, notesLines, evidence, evidenceHash, levelSetMessages, parseProfile,
+    SUMMARY_SYSTEM, boardQuestions, summaryMessages,
   };
 })();

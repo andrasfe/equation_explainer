@@ -19,6 +19,7 @@
       <button id="btn-level" class="top-btn level-chip" title="Where you stand (⌥⌘L)">level ?</button>
       <button id="btn-levelset" class="top-btn" title="Level-set: reassess what you know across all boards (⇧⌘L)">⟳ level-set</button>
       <button id="btn-map" class="top-btn" title="Board map: every side question (⇧⌘M)">⌘ map</button>
+      <button id="btn-summary" class="top-btn" title="Summarize this board: the main question and every side question (⇧⌘S)">∑ summary</button>
       <button id="btn-font" class="top-btn" title="Chalk font">Aa</button>
       <button id="btn-zoom-out" class="top-btn" title="Zoom out (⌘−)">−</button>
       <button id="btn-zoom-in" class="top-btn" title="Zoom in (⌘=)">+</button>
@@ -58,6 +59,11 @@
     <pre id="learner-prompt-text"></pre>
     <details class="learner-base"><summary class="small">and the base tutoring rules before it</summary><pre id="learner-base-text"></pre></details>
   </details>
+</aside>
+
+<aside id="summary" class="drawer" hidden aria-label="Board summary">
+  <div class="outline-head"><span class="chalk-title">summary</span><button id="summary-close" class="icon-btn" title="Close (Esc)">✕</button></div>
+  <div id="summary-content"></div>
 </aside>
 
 <div id="popover" hidden>

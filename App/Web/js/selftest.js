@@ -1,7 +1,7 @@
 /* End-to-end self test. Runs inside the real app (or the dev harness) and
  * exercises the same code paths a person would: prompt → highlight → side
  * question → drill deeper → run Python → compute mode → close back to the
- * original → reload from disk → reopen a branch.
+ * original → reload from disk → reopen a branch → summarize the board.
  */
 EE.selfTest = async function selfTest(opts = {}) {
   const app = EE.app, S = app.S, B = EE.bridge, sleep = EE.util.sleep;
@@ -283,6 +283,47 @@ EE.selfTest = async function selfTest(opts = {}) {
     assert(S.board.openPath.length === 2, 'branch did not reopen');
     await snap('08-reopened-after-reload');
     return { threads: Object.keys(S.board.threads).length };
+  });
+
+  await step('board summary: covers every side question, links back, is saved, regenerates', async () => {
+    const summaryDone = () => waitFor(() => !(S.sums.get(S.board.id) || {}).running, 15 * 60 * 1000, 'the summary');
+    const button = (re) => [...document.querySelectorAll('#summary-content .chalk-btn')].find((b) => re.test(b.textContent));
+    app.closeAll();
+    document.getElementById('btn-summary').click();
+    assert(S.summaryOpen && !app.dom.summary.hidden, 'the summary drawer did not open');
+    const go = button(/write the summary/);
+    assert(go && !go.disabled, 'no "write the summary" button');
+    go.click();
+    await sleep(300);
+    const asked = sent.filter((m) => m.purpose === 'summary').pop();
+    assert(asked, 'no summary request was sent');
+    for (const t of [branch1, branch2]) assert(asked.messages[1].content.includes(t.title), 'the summary prompt lacks the side question: ' + t.title);
+    assert(asked.messages[0].content.includes(NOTE), 'the summary prompt lacks the private notes');
+    await summaryDone();
+    const failed = S.sums.get(S.board.id);
+    assert(!failed, 'summary failed: ' + (failed && failed.error));
+    const sum = S.board.summary;
+    assert(sum && sum.text.length > 200, 'no summary saved on the board');
+    assert(sum.sides >= 2, 'the summary does not cover both side questions');
+    const links = [...document.querySelectorAll('#summary-content .sum-link')];
+    const toDeep = links.find((l) => l.dataset.thread === branch2.id);
+    assert(toDeep, 'no link to the deepest side question');
+    toDeep.click();
+    await settle();
+    assert(S.board.openPath[S.board.openPath.length - 1] === branch2.id, 'the link did not open the side question');
+    await snap('09a-summary');
+    await sleep(1200); // let the save land
+    const r = await B.call('selftest', { event: 'reload', id: S.board.id });
+    assert(r && r.board && JSON.parse(r.board).summary && JSON.parse(r.board).summary.text === sum.text, 'the summary was not saved with the board');
+    button(/regenerate/).click();
+    await sleep(300);
+    assert(S.board.summary === sum, 'regenerating dropped the saved summary before the new one was ready');
+    await summaryDone();
+    assert(!S.sums.get(S.board.id), 'regenerate failed: ' + (S.sums.get(S.board.id) || {}).error);
+    assert(S.board.summary !== sum && S.board.summary.createdAt > sum.createdAt, 'regenerate did not replace the summary');
+    app.toggleSummary(false);
+    app.closeAll();
+    return { chars: sum.text.length, links: links.length, model: sum.model, regenerated: S.board.summary.text.length };
   });
 
   await step('level-set button folds new ratings into the profile', async () => {

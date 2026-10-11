@@ -20,6 +20,8 @@
     learnerOpen: false,
     editingNote: null,
     ls: { running: false, error: null }, // level-set state
+    summaryOpen: false,
+    sums: new Map(),    // boardId -> summary being written {running, text, reasoning, error, refs, cancel}
   });
 
   const dom = {};
@@ -70,8 +72,9 @@
   function save(board = S.board, soon = false) {
     if (!board) return;
     let d = savers.get(board.id);
-    if (!d) { d = debounce(() => saveNow(board), 900); savers.set(board.id, d); }
-    if (soon) d(); else d.flush();
+    // pass the board on every call: a board reopened from disk is a new object with the same id
+    if (!d) { d = debounce((b) => saveNow(b), 900); savers.set(board.id, d); }
+    if (soon) d(board); else d.flush(board);
   }
 
   // ------------------------------------------------------------ board lifecycle
@@ -375,6 +378,7 @@
     applyHighlights();
     scheduleOverlay();
     renderOutline();
+    renderSummary();
     document.body.classList.toggle('has-branches', path.length > 1);
   }
 
@@ -741,6 +745,7 @@
   function toggleOutline(force) {
     S.outlineOpen = typeof force === 'boolean' ? force : !S.outlineOpen;
     if (S.outlineOpen && S.learnerOpen) toggleLearner(false);
+    if (S.outlineOpen && S.summaryOpen) toggleSummary(false);
     renderOutline();
   }
 
@@ -1234,6 +1239,7 @@
   function toggleLearner(force) {
     S.learnerOpen = typeof force === 'boolean' ? force : !S.learnerOpen;
     if (S.learnerOpen && S.outlineOpen) toggleOutline(false);
+    if (S.learnerOpen && S.summaryOpen) toggleSummary(false);
     dom.learner.hidden = !S.learnerOpen;
     document.body.classList.toggle('learner-open', S.learnerOpen);
     dom.levelBtn.classList.toggle('on', S.learnerOpen);
@@ -1347,6 +1353,190 @@
     updateLevelChip();
   }
 
+  // ------------------------------------------------------------ board summary
+  const hasAnswer = (board) => Object.values(board.threads).some((t) => t.cards.some((c) =>
+    c.role === 'assistant' && c.status !== 'streaming' && c.status !== 'error' && R.splitThink(c.text).body.trim()));
+
+  /** The saved summary against the board as it is now: how many questions it has not seen yet. */
+  function summaryState(board) {
+    const qs = M.boardQuestions(board).list;
+    const sum = board.summary;
+    const seen = new Set(sum ? Object.values(sum.refs || {}).map((r) => r.cardId) : []);
+    return { questions: qs.length, sides: qs.filter((q) => q.side).length, fresh: sum ? qs.filter((q) => !seen.has(q.cardId)).length : 0 };
+  }
+
+  /** A high-level recap of the whole board (main question, follow-ups, every side question), saved with it. */
+  function writeSummary(board = S.board) {
+    const busy = board && S.sums.get(board.id);
+    if (!board || (busy && busy.running) || !hasAnswer(board)) return;
+    const { messages, refs, questions, sides } = M.summaryMessages(board, S.notes);
+    const job = { running: true, text: '', reasoning: '', error: null, refs, cancel: null };
+    S.sums.set(board.id, job);
+    renderSummary(true);
+    const h = B.chat(messages, {
+      onChunk({ content, reasoning }) {
+        job.text += content;
+        if (reasoning) job.reasoning += reasoning;
+        if (board === S.board) scheduleSummary();
+      },
+      onDone({ model, cancelled }) {
+        job.running = false;
+        const text = R.splitThink(job.text).body.trim();
+        if (cancelled) {
+          S.sums.delete(board.id); // the saved summary, if any, stays
+        } else if (!text) {
+          job.error = job.reasoning || R.splitThink(job.text).think
+            ? 'The model only produced scratch work (it may have hit the token limit). Try again or raise LLM_MAX_TOKENS.'
+            : 'The model returned an empty summary.';
+        } else {
+          board.summary = { text, refs, questions, sides, model: model || '', createdAt: Date.now() };
+          S.sums.delete(board.id);
+          save(board);
+          if (board === S.board) toast('Summary saved with the board.');
+        }
+        if (board === S.board) renderSummary(true);
+      },
+      onError(err) {
+        job.running = false;
+        job.error = err.message;
+        if (board === S.board) renderSummary(true);
+      },
+    }, { purpose: 'summary' });
+    job.cancel = h.cancel;
+  }
+
+  let summaryQueued = false;
+  function scheduleSummary() {
+    if (summaryQueued) return;
+    summaryQueued = true;
+    setTimeout(() => { summaryQueued = false; renderSummary(true); }, 120);
+  }
+
+  function toggleSummary(force) {
+    S.summaryOpen = typeof force === 'boolean' ? force : !S.summaryOpen;
+    if (S.summaryOpen && S.outlineOpen) toggleOutline(false);
+    if (S.summaryOpen && S.learnerOpen) toggleLearner(false);
+    dom.summary.hidden = !S.summaryOpen;
+    document.body.classList.toggle('summary-open', S.summaryOpen);
+    renderSummary(true);
+    if (S.board) requestAnimationFrame(() => revealColumn(S.board.openPath[S.board.openPath.length - 1], false));
+  }
+
+  /** The summary's Markdown with its #Q links turned into jumps to those questions on the board. */
+  function summaryBody(text, refs, done) {
+    const b = S.board;
+    const div = el('div', { class: 'card-body summary-body' });
+    // a bare tag the model left in the text, like [Q3] or (Q1, Q5), still links
+    div.innerHTML = R.markdown(text.replace(/[[(]\s*(Q\d+(?:\s*(?:,|;|and|&)\s*Q\d+)*)\s*[\])](?!\()/gi,
+      (m, tags) => (tags.match(/Q\d+/gi).some((t) => refs && refs[t.toUpperCase()]) ? tags.match(/Q\d+/gi).map((t) => `[↗](#${t})`).join(' ') : m)));
+    const live = (ref) => ref && b.threads[ref.threadId] && M.findCard(b, ref.cardId);
+    const link = (ref, label) => {
+      const f = live(ref);
+      return el('button', { class: 'sum-link', 'data-act': 'summary-link', 'data-thread': ref.threadId, 'data-qcard': ref.cardId,
+        title: 'Open: ' + truncate(EE.util.texToText(f.card.text), 120) }, label);
+    };
+    const linked = new Set();
+    div.querySelectorAll('a[href]').forEach((a) => {
+      const m = (a.getAttribute('href') || '').match(/^#(Q\d+)$/i);
+      if (!m) return;
+      const tag = m[1].toUpperCase();
+      const ref = refs && refs[tag];
+      if (!live(ref)) { a.replaceWith(el('span', { class: 'sum-gone', title: 'Erased from the board' }, a.textContent)); return; }
+      linked.add(tag);
+      const to = link(ref, '');
+      if (a.textContent === '↗') { // name the question the bare tag pointed at
+        const f = live(ref);
+        to.classList.add('sum-ref');
+        to.textContent = '↳ ' + truncate(EE.util.texToText(ref.side ? b.threads[ref.threadId].title || f.card.text : f.card.text), 34);
+      } else to.append(...a.childNodes);
+      a.replaceWith(to);
+    });
+    // every side question stays one click away, even if the model forgot to link it
+    const missing = done ? Object.entries(refs || {}).filter(([tag, r]) => r.side && !linked.has(tag) && live(r)) : [];
+    if (missing.length) {
+      div.append(el('p', { class: 'sum-also' }, el('span', { class: 'muted' }, 'also explored: '),
+        missing.flatMap(([, r], i) => [i ? ' · ' : null, link(r, truncate(b.threads[r.threadId].title || 'side question', 48))])));
+    }
+    return div;
+  }
+
+  let summarySig = '';
+  function renderSummary(force = false) {
+    const b = S.board;
+    if (!b || !dom.summary) return;
+    const job = S.sums.get(b.id);
+    const sum = b.summary;
+    const st = summaryState(b);
+    const ready = hasAnswer(b);
+    dom.summaryBtn.classList.toggle('on', S.summaryOpen);
+    dom.summaryBtn.classList.toggle('stale', !!sum && st.fresh > 0);
+    dom.summaryBtn.title = (sum ? `Summary of this board (written ${EE.util.relTime(sum.createdAt)})` : 'Summarize this board: the main question and every side question') +
+      (sum && st.fresh ? `\n${st.fresh} question${st.fresh === 1 ? '' : 's'} asked since` : '') + ' (⇧⌘S)';
+    if (!S.summaryOpen) return;
+    const sig = JSON.stringify([b.id, sum && sum.createdAt, job && [job.running, job.text.length, job.reasoning.length, job.error], st, ready, S.config && S.config.model]);
+    if (!force && sig === summarySig) return;
+    summarySig = sig;
+
+    const cfg = S.config || {};
+    const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    const out = [];
+    const btn = (label, onclick, cls = '') => el('button', { class: 'chalk-btn small ' + cls, onclick }, label);
+    if (job && job.running) {
+      const text = R.splitThink(job.text).body;
+      out.push(el('div', { class: 'sum-meta' },
+        el('span', { class: 'chalk-dots' }, text ? 'writing the summary' : job.reasoning || job.text ? 'thinking' : 'reading the board'),
+        el('button', { class: 'link-btn', onclick: () => job.cancel && job.cancel() }, '■ stop')));
+      if (sum) out.push(el('p', { class: 'muted small' }, 'The saved summary stays until this one is finished.'));
+      if (text) out.push(summaryBody(text, job.refs, false));
+    } else {
+      if (job && job.error) {
+        out.push(el('div', { class: 'cfg-problems' }, el('div', {}, '⚠ ' + job.error)),
+          el('div', { class: 'modal-actions' }, btn('↻ try again', () => writeSummary(b), 'primary')));
+      }
+      if (sum) {
+        out.push(el('p', { class: 'muted small sum-meta' },
+          `Written ${EE.util.relTime(sum.createdAt)}${sum.model ? ' by ' + sum.model : ''}. Covers ${plural(sum.questions, 'question')}` +
+          (sum.sides ? `, ${sum.sides} of them side questions.` : '.')));
+        if (st.fresh) out.push(el('p', { class: 'small warn' }, `${plural(st.fresh, 'question')} asked since. Regenerate to fold ${st.fresh === 1 ? 'it' : 'them'} in.`));
+        out.push(summaryBody(sum.text, sum.refs, true));
+        out.push(el('div', { class: 'modal-actions' },
+          btn('⎘ copy', () => copyText(sum.text.replace(/\[([^\]]*)\]\(#Q\d+\)/gi, '$1').replace(/\[Q\d+\]/gi, ''))),
+          btn('↻ regenerate', () => writeSummary(b), st.fresh ? 'primary' : '')));
+      } else if (!job) {
+        out.push(el('p', { class: 'small' }, ready
+          ? `A short, high-level recap of this board to reinforce what you learned: the main question, its follow-ups and ${st.sides ? `all ${plural(st.sides, 'side question')}` : 'any side questions'}, with links back to each. It is saved with the board, and you can regenerate it any time.`
+          : 'Nothing to summarize yet. Ask a question first; the summary covers the main question, its follow-ups and every side question.'));
+        const go = btn('write the summary', () => writeSummary(b), 'primary');
+        if (!ready) go.disabled = true;
+        out.push(el('div', { class: 'modal-actions' }, go));
+      }
+    }
+    out.push(el('p', { class: 'muted small' }, `Written by the board's model: ${cfg.provider || '…'} · ${cfg.model || 'auto'}. Your notes in the "where you stand" panel apply here too.`));
+    dom.summaryContent.replaceChildren(...out);
+  }
+
+  /** Follow a summary link: open the question's column and bring the question into view. */
+  function jumpToQuestion(threadId, cardId) {
+    const b = S.board;
+    if (!b.threads[threadId]) return;
+    b.openPath = M.pathTo(b, threadId);
+    save(b, true);
+    render();
+    requestAnimationFrame(() => {
+      revealColumn(threadId);
+      const c = cols.get(threadId);
+      const ce = c && c.cards.get(cardId);
+      if (!ce) return;
+      const top = ce.getBoundingClientRect().top - c.body.getBoundingClientRect().top + c.body.scrollTop - 14;
+      c.body.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      ce.classList.remove('flash');
+      void ce.offsetWidth; // restart the animation
+      ce.classList.add('flash');
+      setTimeout(() => ce.classList.remove('flash'), 1900);
+      setTimeout(scheduleOverlay, 450);
+    });
+  }
+
   // ------------------------------------------------------------ events
   function onClick(e) {
     const btn = e.target.closest('[data-act]');
@@ -1412,6 +1602,7 @@
       case 'fix-run': fixRun(cardId, idx); break;
       case 'lens': openLens(btn.closest('.katex-display')); break;
       case 'rename-board': renameBoard(); break;
+      case 'summary-link': jumpToQuestion(btn.dataset.thread, btn.dataset.qcard); break;
       default: break;
     }
   }
@@ -1475,6 +1666,7 @@
       status: $('status'), statusText: $('status-text'), levelBtn: $('btn-level'), levelsetBtn: $('btn-levelset'),
       learner: $('learner'), learnerProfile: $('learner-profile'), noteList: $('note-list'), noteInput: $('note-input'),
       noteSave: $('note-save'), noteCancel: $('note-cancel'), learnerPrompt: $('learner-prompt-text'), learnerBase: $('learner-base-text'),
+      summary: $('summary'), summaryContent: $('summary-content'), summaryBtn: $('btn-summary'),
     });
     document.addEventListener('click', onClick);
     dom.backBtn.addEventListener('click', closeAll);
@@ -1487,6 +1679,8 @@
     dom.status.addEventListener('click', showConfig);
     dom.levelBtn.addEventListener('click', () => toggleLearner());
     $('learner-close').addEventListener('click', () => toggleLearner(false));
+    dom.summaryBtn.addEventListener('click', () => toggleSummary());
+    $('summary-close').addEventListener('click', () => toggleSummary(false));
     dom.noteSave.addEventListener('click', submitNote);
     dom.noteCancel.addEventListener('click', resetNoteInput);
     dom.noteInput.addEventListener('keydown', (e) => {
@@ -1530,6 +1724,7 @@
       const a = document.activeElement;
       if (a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT') && a.value) { a.blur(); return; }
       if (S.learnerOpen) { toggleLearner(false); return; }
+      if (S.summaryOpen) { toggleSummary(false); return; }
       if (S.outlineOpen) { toggleOutline(false); return; }
       closeLast();
     });
@@ -1546,7 +1741,8 @@
       try {
         const b = JSON.parse(json);
         const cached = S.cache.get(b.id);
-        const live = cached && [...S.streams.values()].some((s) => s.boardId === b.id);
+        // a board still being written to (an answer or its summary) stays the same object
+        const live = cached && ([...S.streams.values()].some((s) => s.boardId === b.id) || !!(S.sums.get(b.id) || {}).running);
         setBoard(live ? cached : b, !live);
         updateLevelChip();
       } catch (e) {
@@ -1558,7 +1754,7 @@
       const cmds = {
         closeLast, closeAll, toggleMap: () => toggleOutline(), insertMatrix: () => openMatrix(),
         focus: () => focusComposer(), zoomChanged: () => setTimeout(scheduleOverlay, 50), config: showConfig,
-        levelset: () => levelSet({ force: true, open: true }), profile: () => toggleLearner(),
+        levelset: () => levelSet({ force: true, open: true }), profile: () => toggleLearner(), summary: () => toggleSummary(),
       };
       if (cmds[name]) cmds[name]();
     },
@@ -1567,6 +1763,9 @@
       if (b) { b.title = title; if (b === S.board) render(); }
     },
     deleted({ id }) {
+      const job = S.sums.get(id);
+      if (job && job.cancel) job.cancel(); // never write a summary back into a deleted board
+      S.sums.delete(id);
       S.cache.delete(id);
       S.library.delete(id);
       savedSnaps.delete(id);
@@ -1610,6 +1809,7 @@
     S, cols, dom, send, askAbout, openThread, closeThread, closeAll, closeLast, runCode, newBoard, setBoard,
     selectionToAnchor, showPopover, hidePopover, submitPopover, render, refreshConfig, toggleOutline, openMatrix,
     drawOverlay, findCardEl, levelSet, showProfile, toggleLearner, learnerContext, evidenceState, submitNote, removeNote,
+    toggleSummary, writeSummary, summaryState, jumpToQuestion,
   };
   document.addEventListener('DOMContentLoaded', boot);
 })();

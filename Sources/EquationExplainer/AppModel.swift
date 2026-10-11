@@ -161,9 +161,11 @@ final class AppModel: ObservableObject {
             let python = cfg.python.interpreter ?? runner.supportDir.appendingPathComponent("pyenv/bin/python").path
             let levelSet: [String: Any] = ["provider": cfg.levelSet.displayName, "model": cfg.levelSet.model ?? "auto",
                                            "problems": cfg.levelSetProblems]
+            let diagram: [String: Any] = ["provider": cfg.diagram.displayName, "model": cfg.diagram.model ?? "auto",
+                                          "problems": cfg.diagramProblems]
             return ["provider": cfg.llm.displayName, "model": model, "baseURL": cfg.llm.baseURL.absoluteString,
                     "envFile": cfg.envFile?.path ?? "", "problems": problems, "python": python,
-                    "packages": cfg.python.packages.joined(separator: " "), "levelset": levelSet]
+                    "packages": cfg.python.packages.joined(separator: " "), "levelset": levelSet, "diagram": diagram]
 
         case "chat":
             let id = str("id")
@@ -254,14 +256,19 @@ final class AppModel: ObservableObject {
 
     private func startChat(id: String, messages: [[String: String]], purpose: String) {
         let cfg = config
-        let isLevelSet = purpose == "levelset"
-        let settings = isLevelSet ? cfg.levelSet : cfg.llm
-        if isLevelSet, let problem = cfg.levelSetProblems.first {
-            web.failChat(id: id, message: problem)
-            return
+        // each purpose has its own model: explanations (and summaries), the level-set, diagrams
+        let settings: LLMSettings
+        let problems: [String]
+        switch purpose {
+        case "levelset": (settings, problems) = (cfg.levelSet, cfg.levelSetProblems)
+        case "diagram": (settings, problems) = (cfg.diagram, cfg.diagramProblems)
+        default:
+            settings = cfg.llm
+            problems = cfg.llm.provider == .openrouter && cfg.llm.apiKey == nil
+                ? ["OPENROUTER_API_KEY is missing. Add it to \(cfg.envFile?.path ?? ".env") or set LLM_PROVIDER=lmstudio."] : []
         }
-        if !isLevelSet && cfg.llm.provider == .openrouter && cfg.llm.apiKey == nil {
-            web.failChat(id: id, message: "OPENROUTER_API_KEY is missing. Add it to \(cfg.envFile?.path ?? ".env") or set LLM_PROVIDER=lmstudio.")
+        if let problem = problems.first {
+            web.failChat(id: id, message: problem)
             return
         }
         let client = LLMClient(settings: settings)

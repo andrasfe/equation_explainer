@@ -56,13 +56,17 @@ public struct AppConfig: Sendable {
     public var llm: LLMSettings
     /// The model that builds the learner profile ("level-set"); OpenRouter by default.
     public var levelSet: LLMSettings
+    /// The model that turns a diagram request into a diagram spec; OpenRouter by default.
+    public var diagram: LLMSettings
     public var python: PythonSettings
     public var envFile: URL?
     public var problems: [String]
     public var levelSetProblems: [String]
+    public var diagramProblems: [String]
 
     public static let defaultOpenRouterModel = "anthropic/claude-fable-5.1"
     public static let defaultLevelSetModel = "openai/gpt-5.6-sol-pro"
+    public static let defaultDiagramModel = "qwen/qwen3-coder-30b-a3b-instruct"
 
     static func parseProvider(_ raw: String) -> LLMSettings.Provider? {
         switch raw.lowercased() {
@@ -167,6 +171,22 @@ public struct AppConfig: Sendable {
                                    extraBodyJSON: jsonObject(get("LEVELSET_EXTRA_BODY"), key: "LEVELSET_EXTRA_BODY", problems: &lsProblems)
                                        ?? (lsProvider == .openrouter ? #"{"response_format":{"type":"json_object"}}"# : nil))
 
+        // Diagrams: OpenRouter + qwen/qwen3-coder-30b-a3b-instruct unless overridden.
+        var dgProblems: [String] = []
+        var dgProvider = LLMSettings.Provider.openrouter
+        if let p = get("DIAGRAM_PROVIDER") {
+            if let parsed = parseProvider(p) { dgProvider = parsed } else { dgProblems.append("Unknown DIAGRAM_PROVIDER '\(p)', using openrouter") }
+        }
+        let dgEp = endpoint(dgProvider, get)
+        let dgModel = get("DIAGRAM_MODEL") ?? (dgProvider == .openrouter ? defaultDiagramModel : dgEp.model)
+        if dgProvider == .openrouter && dgEp.key == nil {
+            dgProblems.append("OPENROUTER_API_KEY is not set in .env. Diagrams are drawn on OpenRouter (\(dgModel)); set DIAGRAM_PROVIDER=lmstudio to draw them locally.")
+        }
+        let diagram = LLMSettings(provider: dgProvider, baseURL: url(dgEp.base, problems: &dgProblems), apiKey: dgEp.key, model: dgModel,
+                                  temperature: get("DIAGRAM_TEMPERATURE").flatMap(Double.init) ?? 0.2,
+                                  maxTokens: get("DIAGRAM_MAX_TOKENS").flatMap(Int.init) ?? 4096,
+                                  extraBodyJSON: jsonObject(get("DIAGRAM_EXTRA_BODY"), key: "DIAGRAM_EXTRA_BODY", problems: &dgProblems))
+
         let packages = (get("PYTHON_PACKAGES") ?? "numpy sympy scipy matplotlib")
             .split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init).filter { !$0.isEmpty }
         let python = PythonSettings(
@@ -174,8 +194,8 @@ public struct AppConfig: Sendable {
             packages: packages,
             timeout: get("PYTHON_TIMEOUT").flatMap(Double.init) ?? 120)
 
-        return AppConfig(llm: llm, levelSet: levelSet, python: python, envFile: envFile,
-                         problems: problems, levelSetProblems: lsProblems)
+        return AppConfig(llm: llm, levelSet: levelSet, diagram: diagram, python: python, envFile: envFile,
+                         problems: problems, levelSetProblems: lsProblems, diagramProblems: dgProblems)
     }
 }
 

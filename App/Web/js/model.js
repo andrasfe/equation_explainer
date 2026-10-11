@@ -127,7 +127,7 @@ COMPUTE MODE. The student wants the calculation done for them. Reply with:
             q: c.text, quote: k === 0 && t.anchor ? t.anchor.quote : null, side: !!t.parentId,
             rating: ans.rating != null ? ans.rating : 1, rated: ans.rating != null,
             at: Math.max(c.createdAt || 0, ans.ratedAt || 0),
-            gist: EE.render.splitThink(ans.text).body.replace(/```[\s\S]*?```/g, ' ').replace(/\s+/g, ' ').slice(0, 260),
+            gist: EE.diagram.plain(EE.render.splitThink(ans.text).body).replace(/```[\s\S]*?```/g, ' ').replace(/\s+/g, ' ').slice(0, 260),
           });
         });
       }
@@ -238,6 +238,7 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
 
   /** An answer squeezed for the summary prompt: code out, and its "Key idea" line kept even when the rest is cut. */
   function condense(body, cap) {
+    body = EE.diagram.plain(body);
     const text = body.replace(/```[\s\S]*?```/g, ' [code] ').replace(/\s+/g, ' ').trim();
     if (text.length <= cap) return text;
     const key = ((body.match(/\*\*Key idea[^\n]*/i) || [''])[0]).replace(/\s+/g, ' ').trim();
@@ -411,8 +412,9 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
   }
 
   /** Messages for answering in `threadId`, stopping before `beforeCardId`.
-   *  `learner` = {profile, items, notes} adapts the level; see learnerSection(). */
-  function buildMessages(board, threadId, beforeCardId, mode, learner) {
+   *  `learner` = {profile, items, notes} adapts the level; see learnerSection().
+   *  `opts.diagrams`: the diagram model is available, so the answer may ask for diagrams. */
+  function buildMessages(board, threadId, beforeCardId, mode, learner, opts = {}) {
     const path = pathTo(board, threadId);
     const msgs = [];
     let lastQuestion = '';
@@ -447,7 +449,8 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
     }
     if (merged.length && merged[0].role !== 'user') merged.unshift({ role: 'user', content: '(continuing)' });
     const code = mode === 'compute' || wantsCode(lastQuestion);
-    const system = SYSTEM + learnerSection(learner) + (path.length > 1 ? BRANCH : '') + (code ? CODE : '') + (mode === 'compute' ? COMPUTE : '');
+    const system = SYSTEM + (opts.diagrams && mode !== 'compute' ? EE.diagram.RULE : '') + learnerSection(learner) +
+      (path.length > 1 ? BRANCH : '') + (code ? CODE : '') + (mode === 'compute' ? COMPUTE : '');
     return [{ role: 'system', content: system }, ...merged];
   }
 

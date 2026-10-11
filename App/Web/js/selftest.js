@@ -1,7 +1,8 @@
 /* End-to-end self test. Runs inside the real app (or the dev harness) and
  * exercises the same code paths a person would: prompt → highlight → side
  * question → drill deeper → run Python → compute mode → close back to the
- * original → reload from disk → reopen a branch → summarize the board.
+ * original → reload from disk → reopen a branch → summarize the board →
+ * draw a circuit diagram.
  */
 EE.selfTest = async function selfTest(opts = {}) {
   const app = EE.app, S = app.S, B = EE.bridge, sleep = EE.util.sleep;
@@ -324,6 +325,42 @@ EE.selfTest = async function selfTest(opts = {}) {
     app.toggleSummary(false);
     app.closeAll();
     return { chars: sum.text.length, links: links.length, model: sum.model, regenerated: S.board.summary.text.length };
+  });
+
+  await step('diagrams: a circuit answer gets its circuit drawn, ◇ adds one, both are saved', async () => {
+    if (!app.diagramsOn()) return { skipped: ((S.config.diagram || {}).problems || ['no diagram model'])[0] };
+    const dgIdle = () => waitFor(() => S.dgJobs.size === 0, 5 * 60 * 1000, 'the diagram model');
+    app.closeAll();
+    const card = app.send('root', String.raw`Draw the quantum circuit that prepares the Bell state $\ket{\Phi^+}$ from $\ket{00}$, and explain what each gate does.`, 'explain');
+    await idle();
+    answerOk(card);
+    assert(lastSystem().includes('[[diagram:'), 'the explanation prompt does not offer diagrams');
+    assert(/\[\[\s*diagram/i.test(card.text), 'the answer did not ask for a diagram');
+    await dgIdle();
+    const d = (card.diagrams || {}).m0;
+    assert(d && d.spec, 'no diagram was drawn: ' + ((d && d.error) || 'nothing came back'));
+    assert(d.spec.type === 'circuit', 'expected a circuit, got ' + d.spec.type);
+    const ops = d.spec.ops.map((o) => (o.controls.length ? 'C' : '') + (o.kind === 'gate' ? EE.util.texToText(o.label) : o.kind));
+    assert(ops.includes('H') && ops.includes('CX'), 'the circuit lacks H or the CNOT: ' + ops.join(' '));
+    const asked = sent.filter((m) => m.purpose === 'diagram').pop();
+    assert(asked && asked.messages[1].content.includes('Bell'), 'the diagram model was not given the question');
+    const ce = app.findCardEl(card.id);
+    const fig = ce.querySelector('.diagram[data-dg="m0"] .dg-canvas svg');
+    assert(fig && fig.querySelectorAll('path').length > 5, 'the circuit is not on the board');
+    fig.closest('.diagram').scrollIntoView({ block: 'center' });
+    await settle();
+    await snap('10-diagram');
+    ce.querySelector('[data-act="diagram"]').click();
+    await sleep(300);
+    await dgIdle();
+    const x = card.diagrams.x1;
+    assert(x && x.spec, 'the ◇ diagram failed: ' + ((x && x.error) || 'nothing came back'));
+    await sleep(1200); // let the save land
+    const r = await B.call('selftest', { event: 'reload', id: S.board.id });
+    const disk = JSON.parse(r.board);
+    const dc = Object.values(disk.threads).flatMap((t) => t.cards).find((c) => c.id === card.id);
+    assert(dc && dc.diagrams && JSON.stringify(dc.diagrams.m0.spec) === JSON.stringify(d.spec) && dc.diagrams.x1.spec, 'the diagrams were not saved with the board');
+    return { model: d.model, circuit: ops.join(' '), extra: x.spec.type, wires: d.spec.wires.length };
   });
 
   await step('level-set button folds new ratings into the profile', async () => {

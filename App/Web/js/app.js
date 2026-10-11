@@ -1,7 +1,7 @@
 /* The blackboard controller: state, actions, rendering. */
 (() => {
   const { uid, el, esc, debounce, truncate, plainTitle, rng, hash, clean } = EE.util;
-  const R = EE.render, M = EE.model, A = EE.anchors, B = EE.bridge;
+  const R = EE.render, M = EE.model, A = EE.anchors, B = EE.bridge, DG = EE.diagram;
 
   const S = (EE.state = {
     board: null,
@@ -22,6 +22,7 @@
     ls: { running: false, error: null }, // level-set state
     summaryOpen: false,
     sums: new Map(),    // boardId -> summary being written {running, text, reasoning, error, refs, cancel}
+    dgJobs: new Map(),  // `${cardId}:${key}` -> diagram being drawn {boardId, cancel}
   });
 
   const dom = {};
@@ -153,7 +154,7 @@
   }
 
   function stream(board, threadId, card, mode) {
-    const messages = M.buildMessages(board, threadId, card.id, mode, learnerContext(board, card.id));
+    const messages = M.buildMessages(board, threadId, card.id, mode, learnerContext(board, card.id), { diagrams: diagramsOn() });
     const h = B.chat(messages, {
       onChunk({ content, reasoning }) {
         card.text += content;
@@ -176,6 +177,7 @@
         save(board);
         if (board === S.board) render();
         updateLevelChip();
+        if (card.status === 'done' && diagramsOn()) autoDiagrams(board, card);
       },
       onError(err) {
         S.streams.delete(card.id);
@@ -271,6 +273,7 @@
       'Erase');
     if (!ok) return;
     cancelCard(cardId);
+    cancelDiagrams(cardId);
     removeThreads(b, branchIds);
     f.thread.cards.splice(f.index, 1);
     save(b);
@@ -282,10 +285,181 @@
     const f = M.findCard(b, cardId);
     if (!f || f.card.role !== 'assistant') return;
     cancelCard(cardId);
-    Object.assign(f.card, { text: '', reasoning: '', status: 'streaming', error: null, runs: {}, edits: {} });
+    cancelDiagrams(cardId);
+    Object.assign(f.card, { text: '', reasoning: '', status: 'streaming', error: null, runs: {}, edits: {}, diagrams: {} });
     touch(f.card);
     render();
     stream(b, f.thread.id, f.card, f.card.mode);
+  }
+
+  // ------------------------------------------------------------ diagrams
+  /** The diagram model is configured (it runs on OpenRouter by default, so it needs the key). */
+  const diagramsOn = () => !!(S.config && S.config.diagram && !(S.config.diagram.problems || []).length);
+  const dgKey = (cardId, key) => cardId + ':' + key;
+
+  /** Draw every diagram the finished answer asked for. */
+  function autoDiagrams(board, card) {
+    const { requests } = DG.extract(R.splitThink(card.text).body);
+    requests.slice(0, 3).forEach((req, i) => {
+      const e = (card.diagrams || {})['m' + i];
+      if (!e || (!e.spec && !e.error && !e.dismissed)) drawDiagram(board, card, 'm' + i);
+    });
+  }
+
+  /** What the diagram model needs: the question, the highlighted quote of a side question, the answer, the request. */
+  function diagramMessages(board, card, request) {
+    const f = M.findCard(board, card.id);
+    const before = f ? f.thread.cards.slice(0, f.index) : [];
+    const q = before.slice().reverse().find((c) => c.role === 'user');
+    return DG.messages({
+      question: q ? q.text : '', quote: f && f.thread.anchor ? f.thread.anchor.llmText : '',
+      answer: R.splitThink(card.text).body, request,
+    });
+  }
+
+  /** Ask the diagram model for diagram `key` of an answer: 'm<i>' for the i-th marker, 'x<n>' for one asked with ◇. */
+  function drawDiagram(board, card, key) {
+    const id = dgKey(card.id, key);
+    if (S.dgJobs.has(id)) return;
+    let request = '';
+    if (key[0] === 'm') {
+      request = DG.extract(R.splitThink(card.text).body).requests[Number(key.slice(1))];
+      if (request == null) return;
+    }
+    const all = card.diagrams || (card.diagrams = {});
+    const entry = all[key] || (all[key] = { createdAt: Date.now() });
+    Object.assign(entry, { request, error: null });
+    delete entry.dismissed;
+    const job = { boardId: board.id, cancel: null };
+    S.dgJobs.set(id, job);
+    const refresh = () => { touch(card); if (board === S.board) render(); };
+    const finish = () => {
+      S.dgJobs.delete(id);
+      if (key[0] === 'x' && !entry.spec && !entry.error) delete all[key]; // stopped before anything was drawn
+      save(board);
+      refresh();
+    };
+    const attempt = (messages, retry) => {
+      let text = '';
+      const h = B.chat(messages, {
+        onChunk({ content }) { text += content; },
+        onDone({ model, cancelled }) {
+          if (cancelled) { finish(); return; }
+          try {
+            Object.assign(entry, { spec: DG.parse(text), model: model || entry.model || null, drawnAt: Date.now(), error: null });
+          } catch (e) {
+            if (!retry) {
+              // one more go, with the reason it could not be drawn
+              attempt([...messages, { role: 'assistant', content: text },
+                { role: 'user', content: `That cannot be drawn: ${e.message}. Reply with the corrected JSON object only.` }], true);
+              return;
+            }
+            entry.error = `The diagram model's reply could not be drawn: ${e.message}.`;
+          }
+          finish();
+        },
+        onError(err) { entry.error = err.message; finish(); },
+      }, { purpose: 'diagram' });
+      job.cancel = h.cancel;
+    };
+    refresh();
+    attempt(diagramMessages(board, card, request), false);
+  }
+
+  /** ◇ on an answer: one more diagram, chosen by the diagram model, under the answer. */
+  function addDiagram(board, card) {
+    const n = Math.max(0, ...Object.keys(card.diagrams || {}).filter((k) => k[0] === 'x').map((k) => Number(k.slice(1)) || 0));
+    drawDiagram(board, card, 'x' + (n + 1));
+  }
+
+  function cancelDiagrams(cardId) {
+    for (const [id, job] of [...S.dgJobs]) if (id.startsWith(cardId + ':') && job.cancel) job.cancel();
+  }
+
+  function eraseDiagram(cardId, key) {
+    const f = M.findCard(S.board, cardId);
+    const all = f && f.card.diagrams;
+    if (!all || !all[key]) return;
+    if (key[0] === 'm') all[key] = { request: all[key].request, dismissed: true, createdAt: all[key].createdAt };
+    else delete all[key];
+    touch(f.card);
+    save(S.board);
+    render();
+  }
+
+  function zoomDiagram(cardId, key) {
+    const f = M.findCard(S.board, cardId);
+    const e = f && (f.card.diagrams || {})[key];
+    if (!e || !e.spec) return;
+    const c = DG.canvas(e.spec);
+    const z = Math.max(1, Math.min(2.4, (window.innerWidth * 0.86) / Number(c.dataset.w), (window.innerHeight * 0.68) / Number(c.dataset.h)));
+    c.style.zoom = z;
+    let close;
+    close = modal(el('div', {},
+      e.spec.title ? el('h2', { class: 'chalk-title modal-title', html: DG.labelHTML(e.spec.title) }) : null,
+      el('div', { class: 'dg-modal-stage' }, c),
+      el('div', { class: 'modal-actions' }, e.model ? el('span', { class: 'model-tag' }, e.model) : null,
+        el('span', { class: 'spacer' }), el('button', { class: 'chalk-btn primary', onclick: () => close() }, 'close'))), 'modal-diagram');
+  }
+
+  let fontsPending = false;
+  /** Put each diagram (or its progress, or its error) into its slot; ◇ diagrams go under the answer. */
+  function fillDiagrams(body, card, requests) {
+    const all = card.diagrams || {};
+    const extra = Object.keys(all).filter((k) => k[0] === 'x')
+      .concat([...S.dgJobs.keys()].filter((id) => id.startsWith(card.id + ':x')).map((id) => id.slice(card.id.length + 1)));
+    for (const key of [...new Set(extra)].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))) {
+      body.append(el('div', { class: 'diagram', 'data-dg': key, 'data-noanchor': '' }));
+    }
+    let drew = false;
+    for (const slot of body.querySelectorAll('.diagram[data-dg]')) {
+      const key = slot.dataset.dg;
+      const request = key[0] === 'm' ? requests[Number(key.slice(1))] || '' : '';
+      let view = null;
+      try { view = diagramView(card, key, request); } catch (e) {
+        view = el('div', { class: 'dg-pending' }, el('span', { class: 'err' }, '⚠ This diagram could not be drawn: ' + e.message),
+          el('button', { class: 'link-btn', 'data-act': 'dg-redraw', 'data-key': key }, '↻ redraw'));
+      }
+      if (view) { slot.replaceChildren(view); drew = drew || !!view.querySelector('.dg-canvas'); } else slot.remove();
+    }
+    // labels were measured with fallback fonts if the math fonts were still loading: measure again once they are in
+    if (drew && document.fonts && document.fonts.status !== 'loaded' && !fontsPending) {
+      fontsPending = true;
+      document.fonts.ready.then(() => {
+        fontsPending = false;
+        DG.clearCache();
+        for (const t of Object.values((S.board || { threads: {} }).threads)) for (const c of t.cards) if (c.diagrams) touch(c);
+        scheduleRender();
+      });
+    }
+  }
+
+  function diagramView(card, key, request) {
+    const e = (card.diagrams || {})[key];
+    const job = S.dgJobs.has(dgKey(card.id, key));
+    const btn = (act, label, title) => el('button', { class: act === 'dg-stop' || label.length > 2 ? 'link-btn' : 'icon-btn', 'data-act': act, 'data-key': key, title }, label);
+    const req = (text) => el('span', { class: 'dg-req', html: R.inline(truncate(text, 180)) });
+    if (e && e.dismissed && !job) return null;
+    if (e && e.spec) {
+      return el('figure', { class: 'dg-fig' + (job ? ' is-redrawing' : '') },
+        DG.figure(e.spec),
+        el('figcaption', { class: 'dg-cap' },
+          el('span', { class: 'dg-title', html: e.spec.title ? DG.labelHTML(e.spec.title) : '' }),
+          el('span', { class: 'spacer' }),
+          job ? el('span', { class: 'chalk-dots' }, 'redrawing') : null,
+          job ? btn('dg-stop', '■ stop') : null,
+          job ? null : btn('dg-zoom', '⤢', 'Enlarge'),
+          job ? null : btn('dg-redraw', '↻', 'Redraw this diagram'),
+          job ? null : btn('dg-erase', '✕', 'Erase this diagram'),
+          e.model ? el('span', { class: 'model-tag' }, e.model) : null),
+        e.error && !job ? el('div', { class: 'dg-note err' }, '⚠ Redrawing failed, so this is the earlier drawing. ' + e.error) : null);
+    }
+    const box = el('div', { class: 'dg-pending' });
+    if (job) box.append(el('span', { class: 'chalk-dots' }, 'drawing a diagram'), request ? req(request) : null, btn('dg-stop', '■ stop'));
+    else if (e && e.error) box.append(el('span', { class: 'err' }, '⚠ ' + e.error), btn('dg-redraw', '↻ try again'));
+    else if (card.status === 'streaming') box.append(el('span', { class: 'muted' }, '◇ a diagram goes here:'), req(request));
+    else box.append(el('span', { class: 'muted' }, '◇'), req(request || 'a diagram'), btn('dg-redraw', 'draw it'));
+    return box;
   }
 
   // ------------------------------------------------------------ python
@@ -503,8 +677,10 @@
       const reasoning = ((card.reasoning || '') + think).trim();
       scratch.hidden = !reasoning;
       if (reasoning) scratch.querySelector('.scratch-body').textContent = reasoning;
-      body.innerHTML = text ? R.markdown(text) : '';
+      const dg = DG.extract(text, card.status === 'streaming');
+      body.innerHTML = text ? DG.slots(R.markdown(dg.text)) : '';
       decorate(body, card);
+      fillDiagrams(body, card, dg.requests);
       if (card.status === 'streaming') {
         status.append(
           el('span', { class: 'chalk-dots' }, thinking || (!text && reasoning) ? 'thinking' : text ? 'writing' : 'picking up the chalk'),
@@ -516,7 +692,8 @@
         status.append(el('span', { class: 'muted' }, '(stopped)'), el('button', { class: 'link-btn', 'data-act': 'regenerate' }, '↻ redo'));
       }
       if (card.status !== 'streaming') {
-        tools.append(toolBtn('regenerate', '↻', 'Rewrite this answer'), toolBtn('copy-card', '⎘', 'Copy as Markdown'), toolBtn('erase-card', '⌫', 'Erase from the board'));
+        tools.append(toolBtn('regenerate', '↻', 'Rewrite this answer'), toolBtn('diagram', '◇', 'Draw a diagram of this answer: its circuit or architecture'),
+          toolBtn('copy-card', '⎘', 'Copy as Markdown'), toolBtn('erase-card', '⌫', 'Erase from the board'));
         if (card.model) tools.append(el('span', { class: 'model-tag' }, card.model));
       }
     } else if (card.role === 'code') {
@@ -1099,6 +1276,8 @@
       el('h2', { class: 'chalk-title modal-title' }, 'Model & runtime'),
       row('provider', c.provider), row('model', c.model), row('endpoint', c.baseURL), row('.env file', c.envFile || 'not found, using defaults'),
       row('python', c.python), row('packages', c.packages),
+      c.diagram ? row('diagrams', `${c.diagram.provider} · ${c.diagram.model}`) : null,
+      ((c.diagram && c.diagram.problems) || []).length ? el('div', { class: 'cfg-problems' }, c.diagram.problems.map((p) => el('div', {}, '◇ ' + p))) : null,
       (c.problems || []).length ? el('div', { class: 'cfg-problems' }, c.problems.map((p) => el('div', {}, '⚠ ' + p))) : null,
       el('p', { class: 'muted small' }, 'Edit the .env file and click refresh. Keys: LLM_PROVIDER (openrouter | lmstudio), OPENROUTER_API_KEY, OPENROUTER_MODEL, LMSTUDIO_BASE_URL, LMSTUDIO_MODEL.'),
       el('div', { class: 'modal-actions' },
@@ -1568,7 +1747,7 @@
       case 'erase-card': eraseCard(cardId); break;
       case 'copy-card': {
         const f = M.findCard(b, cardId);
-        if (f) copyText(R.splitThink(f.card.text).body);
+        if (f) copyText(DG.plain(R.splitThink(f.card.text).body));
         break;
       }
       case 'run': runCode(cardId, idx); break;
@@ -1603,6 +1782,11 @@
       case 'lens': openLens(btn.closest('.katex-display')); break;
       case 'rename-board': renameBoard(); break;
       case 'summary-link': jumpToQuestion(btn.dataset.thread, btn.dataset.qcard); break;
+      case 'diagram': { const f = M.findCard(b, cardId); if (f) addDiagram(b, f.card); break; }
+      case 'dg-redraw': { const f = M.findCard(b, cardId); if (f) drawDiagram(b, f.card, btn.dataset.key); break; }
+      case 'dg-stop': { const j = S.dgJobs.get(dgKey(cardId, btn.dataset.key)); if (j && j.cancel) j.cancel(); break; }
+      case 'dg-erase': eraseDiagram(cardId, btn.dataset.key); break;
+      case 'dg-zoom': zoomDiagram(cardId, btn.dataset.key); break;
       default: break;
     }
   }
@@ -1741,8 +1925,8 @@
       try {
         const b = JSON.parse(json);
         const cached = S.cache.get(b.id);
-        // a board still being written to (an answer or its summary) stays the same object
-        const live = cached && ([...S.streams.values()].some((s) => s.boardId === b.id) || !!(S.sums.get(b.id) || {}).running);
+        // a board still being written to (an answer, its summary or a diagram) stays the same object
+        const live = cached && ([...S.streams.values(), ...S.dgJobs.values()].some((s) => s.boardId === b.id) || !!(S.sums.get(b.id) || {}).running);
         setBoard(live ? cached : b, !live);
         updateLevelChip();
       } catch (e) {
@@ -1766,6 +1950,7 @@
       const job = S.sums.get(id);
       if (job && job.cancel) job.cancel(); // never write a summary back into a deleted board
       S.sums.delete(id);
+      for (const d of [...S.dgJobs.values()]) if (d.boardId === id && d.cancel) d.cancel();
       S.cache.delete(id);
       S.library.delete(id);
       savedSnaps.delete(id);
@@ -1809,7 +1994,7 @@
     S, cols, dom, send, askAbout, openThread, closeThread, closeAll, closeLast, runCode, newBoard, setBoard,
     selectionToAnchor, showPopover, hidePopover, submitPopover, render, refreshConfig, toggleOutline, openMatrix,
     drawOverlay, findCardEl, levelSet, showProfile, toggleLearner, learnerContext, evidenceState, submitNote, removeNote,
-    toggleSummary, writeSummary, summaryState, jumpToQuestion,
+    toggleSummary, writeSummary, summaryState, jumpToQuestion, drawDiagram, addDiagram, diagramsOn,
   };
   document.addEventListener('DOMContentLoaded', boot);
 })();

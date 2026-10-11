@@ -43,6 +43,17 @@ is saved with all of its branches, and the circled spots stay marked so you can 
   - The summary is saved inside the board. **↻ regenerate** writes a new one, and the old one stays
     until the new one is finished. A dot on the button means you have asked more since.
   - It is written by the board's model (`LLM_PROVIDER`).
+- **Diagrams.** Wherever an answer involves a circuit or an architecture, it draws one in chalk, right
+  where it helps.
+  - Quantum circuits (and reversible ones) are drawn on wires, with gates, controls, ⊕ targets, swaps,
+    measurements, barriers and labelled stages such as *oracle* and *diffusion*.
+  - Architectures, pipelines, feedback loops and logic circuits are drawn as block diagrams, with grouped
+    layers and dashed skip connections. Labels can hold math.
+  - The answer only says what to draw. A separate model, `qwen/qwen3-coder-30b-a3b-instruct` on
+    OpenRouter (`DIAGRAM_MODEL`), turns that into the diagram, and the app lays it out. A diagram takes a few
+    seconds and costs a fraction of a cent.
+  - **◇** under any answer asks for a diagram of it. On a diagram, **⤢** enlarges it, **↻** redraws it (the
+    old one stays until the new one is ready) and **✕** erases it. Diagrams are saved with the board.
 - **No code unless you ask.** Answers stick to mathematics. Code appears only when your question asks
   for code, Python, a script or a plot, or when you use *compute* mode.
 - **Computation.**
@@ -73,6 +84,8 @@ make run                  # builds "build/Equation Explainer.app" and opens it
 | `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_EXTRA_BODY` | generation settings (`LLM_EXTRA_BODY` is JSON merged into the request) |
 | `LEVELSET_MODEL` | model for the level-set, default `openai/gpt-5.6-sol-pro` on OpenRouter (needs `OPENROUTER_API_KEY`) |
 | `LEVELSET_PROVIDER`, `LEVELSET_MAX_TOKENS`, `LEVELSET_EXTRA_BODY` | where the level-set runs (`openrouter` by default, or `lmstudio`) and its request settings |
+| `DIAGRAM_MODEL` | model that draws diagrams, default `qwen/qwen3-coder-30b-a3b-instruct` on OpenRouter (needs `OPENROUTER_API_KEY`; without it, answers come without diagrams) |
+| `DIAGRAM_PROVIDER`, `DIAGRAM_TEMPERATURE`, `DIAGRAM_MAX_TOKENS`, `DIAGRAM_EXTRA_BODY` | where diagrams are drawn (`openrouter` by default, or `lmstudio`) and their request settings |
 | `PYTHON_PATH` | use your own interpreter instead of the managed environment |
 | `PYTHON_PACKAGES`, `PYTHON_TIMEOUT` | packages for the managed environment, and the per-run time limit in seconds |
 
@@ -107,7 +120,7 @@ Layout:
 
 - `Sources/EECore` holds the testable core: `.env` and config, the streaming client, the Python runner and board storage.
 - `Sources/EquationExplainer` is the SwiftUI shell, the WKWebView host and the JS bridge.
-- `App/Web` is the blackboard UI in plain JS, with vendored KaTeX, marked, DOMPurify and highlight.js.
+- `App/Web` is the blackboard UI in plain JS, with vendored KaTeX, marked, DOMPurify, highlight.js and dagre (diagram layout).
 - `App/Python` holds the cell runner, `boardkit` and the matplotlib chalk style.
 
 ## License
@@ -123,5 +136,5 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
 additional terms or conditions.
 
-The vendored libraries in `App/Web/vendor` keep their own licenses: KaTeX and marked (MIT),
+The vendored libraries in `App/Web/vendor` keep their own licenses: KaTeX, marked and dagre (MIT),
 DOMPurify (Apache-2.0 or MPL-2.0) and highlight.js (BSD-3-Clause).

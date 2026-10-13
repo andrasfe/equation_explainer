@@ -1,0 +1,23 @@
+[project]
+name = "equation-explainer"
+version = "1.0"
+description = "A blackboard for digging into mathematics and quantum algorithms with an LLM (GTK4 / WebKitGTK)"
+readme = "../README.md"
+requires-python = ">=3.10"
+license = { text = "MIT OR Apache-2.0" }
+# PyGObject with GTK 4, libadwaita 1.5 and WebKitGTK 6.0 come from the distribution
+# (Ubuntu: python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-webkit-6.0), not from PyPI.
+dependencies = []
+
+[project.scripts]
+equation-explainer = "equation_explainer.app:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["equation_explainer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

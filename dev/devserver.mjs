@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Dev harness: serves App/Web in a normal browser and implements the native
+// Dev harness: serves shared/web in a normal browser and implements the native
 // bridge over HTTP (config, chat streaming, python, board storage).
-// The macOS app does the same work in Swift; this exists for fast UI iteration
+// The desktop apps (Swift on macOS, Python on Linux) do the same work natively; this exists for fast UI iteration
 // and browser automation.  Usage: node dev/devserver.mjs [port]
 import http from 'node:http';
 import fs from 'node:fs';
@@ -11,14 +11,17 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const WEB = path.join(ROOT, 'App', 'Web');
-const KIT = path.join(ROOT, 'App', 'Python');
+const WEB = path.join(ROOT, 'shared', 'web');
+const KIT = path.join(ROOT, 'shared', 'python');
 const DATA_ROOT = process.env.EE_DEV_DATA || path.join(ROOT, 'dev', 'data');
 const DATA = path.join(DATA_ROOT, 'boards');
 const PROFILE = path.join(DATA_ROOT, 'learner.json');
 const NOTES = path.join(DATA_ROOT, 'learner-notes.json');
 const PORT = Number(process.argv[2] || process.env.PORT || 5178);
-const VENV_PY = path.join(os.homedir(), 'Library', 'Application Support', 'EquationExplainer', 'pyenv', 'bin', 'python');
+// the managed Python environment of the desktop app on this platform
+const DATA_HOME = process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support')
+  : (process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'));
+const VENV_PY = path.join(process.env.EE_DATA_DIR || path.join(DATA_HOME, 'EquationExplainer'), 'pyenv', 'bin', 'python');
 fs.mkdirSync(DATA, { recursive: true });
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png',
@@ -42,7 +45,9 @@ function loadEnv() {
   const get = (k) => (vals[k] || '').trim() || null;
   const endpoint = (provider) => provider === 'openrouter'
     ? { baseURL: get('OPENROUTER_BASE_URL') || 'https://openrouter.ai/api/v1', apiKey: get('OPENROUTER_API_KEY'), model: get('OPENROUTER_MODEL') || 'anthropic/claude-fable-5.1' }
-    : { baseURL: get('LMSTUDIO_BASE_URL') || 'http://localhost:1234/v1', apiKey: get('LMSTUDIO_API_KEY'), model: get('LMSTUDIO_MODEL') };
+    : provider === 'custom' || provider === 'openai'
+      ? { baseURL: get('LLM_BASE_URL') || 'http://localhost:8080/v1', apiKey: get('LLM_API_KEY'), model: get('LLM_MODEL') }
+      : { baseURL: get('LMSTUDIO_BASE_URL') || 'http://localhost:1234/v1', apiKey: get('LMSTUDIO_API_KEY'), model: get('LMSTUDIO_MODEL') };
   const provider = (get('LLM_PROVIDER') || (get('OPENROUTER_API_KEY') ? 'openrouter' : 'lmstudio')).toLowerCase();
   const cfg = { provider, envFile: fs.existsSync(file) ? file : null, problems: [],
     temperature: Number(get('LLM_TEMPERATURE') || 0.3), maxTokens: Number(get('LLM_MAX_TOKENS') || 8192), ...endpoint(provider) };
@@ -121,7 +126,7 @@ async function bridge(msg) {
       let model = c.model;
       try { model = await resolveModel(c); } catch (e) { c.problems.push(e.message); }
       const ls = c.levelset, dg = c.diagram;
-      const name = (p) => (p === 'openrouter' ? 'OpenRouter' : 'LM Studio');
+      const name = (p) => (p === 'openrouter' ? 'OpenRouter' : p === 'custom' || p === 'openai' ? 'Custom' : 'LM Studio');
       return { provider: name(c.provider), model, baseURL: c.baseURL, envFile: c.envFile, problems: c.problems, python: VENV_PY, packages: 'numpy sympy scipy matplotlib',
         levelset: { provider: name(ls.provider), model: ls.model || 'auto', problems: ls.problems },
         diagram: { provider: name(dg.provider), model: dg.model || 'auto', problems: dg.problems } };

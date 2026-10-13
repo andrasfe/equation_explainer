@@ -18,3 +18,8 @@ __pycache__/
 Boards/
 learner.json
 learner-notes.json
+
+# Linux app
+.pytest_cache/
+*.egg-info/
+.venv/

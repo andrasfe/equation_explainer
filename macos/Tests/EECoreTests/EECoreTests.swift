@@ -174,7 +174,7 @@ final class PythonRunnerTests: XCTestCase {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("ee-py-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tmp) }
         let kit = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("App/Python")
+            .deletingLastPathComponent().appendingPathComponent("shared/python")
         let runner = PythonRunner(supportDir: tmp, kitDir: kit)
         let settings = PythonSettings(interpreter: py, packages: [], timeout: 20)
         let ok = try await runner.run(id: "a", code: "print('$$x^2$$')\n", settings: settings) { _ in }

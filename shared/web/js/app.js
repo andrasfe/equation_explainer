@@ -1,6 +1,6 @@
 /* The blackboard controller: state, actions, rendering. */
 (() => {
-  const { uid, el, esc, debounce, truncate, plainTitle, rng, hash, clean } = EE.util;
+  const { uid, el, esc, debounce, truncate, plainTitle, rng, hash, clean, kbd, IS_MAC } = EE.util;
   const R = EE.render, M = EE.model, A = EE.anchors, B = EE.bridge, DG = EE.diagram;
 
   const S = (EE.state = {
@@ -27,7 +27,11 @@
 
   const dom = {};
   const cols = new Map(); // threadId -> column record
-  const FONTS = ['Chalkboard SE', 'Chalkduster', 'Bradley Hand', 'Noteworthy', 'Marker Felt'];
+  // chalk fonts to cycle with Aa: the macOS system faces, or the OFL faces vendored in shared/web/fonts
+  const FONTS = IS_MAC
+    ? ['Chalkboard SE', 'Chalkduster', 'Bradley Hand', 'Noteworthy', 'Marker Felt']
+    : ['Patrick Hand', 'Architects Daughter', 'Gloria Hallelujah', 'Shadows Into Light', 'Gochi Hand', 'Fredericka the Great'];
+  const DEFAULT_FONT = FONTS[0];
   const EXAMPLES = [
     { text: String.raw`Explain Grover's diffusion operator $D = 2\ket{s}\bra{s} - I$ and why it amplifies the marked state.`, mode: 'explain' },
     { text: String.raw`Explain the quantum Fourier transform $\ket{j} \mapsto \frac{1}{\sqrt{N}}\sum_{k=0}^{N-1} e^{2\pi i jk/N}\ket{k}$`, mode: 'explain' },
@@ -736,7 +740,7 @@
           el('span', { class: 'spacer' }),
           running
             ? el('button', { class: 'btn-stop', 'data-act': 'stop-run', 'data-idx': i }, '■ Stop')
-            : el('button', { class: 'btn-run', 'data-act': 'run', 'data-idx': i, title: 'Run in the background (⌘⏎ while editing)' }, '▶ Execute'),
+            : el('button', { class: 'btn-run', 'data-act': 'run', 'data-idx': i, title: kbd('Run in the background (⌘⏎ while editing)') }, '▶ Execute'),
           el('button', { class: 'icon-btn', 'data-act': 'edit-code', 'data-idx': i, title: 'Edit code' }, '✎'),
           el('button', { class: 'icon-btn', 'data-act': 'copy-code', 'data-idx': i, title: 'Copy code' }, '⎘')),
         pre);
@@ -831,7 +835,7 @@
         python: 'Write Python yourself and run it',
       }[m] }, m));
     const send = el('button', { class: 'send-btn', title: 'Write it on the board' }, 'write ↵');
-    const matrix = el('button', { class: 'tool-btn', title: 'Insert a matrix (⌥⌘M)' }, '▦ matrix');
+    const matrix = el('button', { class: 'tool-btn', title: kbd('Insert a matrix (⌥⌘M)') }, '▦ matrix');
     const hint = el('span', { class: 'hint' });
     const root = el('div', { class: 'composer' + (isRoot ? ' composer-root' : '') },
       preview, ta, el('div', { class: 'composer-bar' }, el('div', { class: 'modes' }, modeBtns), matrix, hint, el('span', { class: 'spacer' }), send));
@@ -855,7 +859,7 @@
         : m === 'compute'
           ? 'Type a matrix or an expression to compute, e.g. (H⊗H)·CNOT·(H⊗H)'
           : isRoot ? 'Write an equation or a question…' : 'Follow up on this side question…';
-      hint.textContent = m === 'python' ? '⌘ + enter runs it' : 'enter writes · shift + enter for a new line';
+      hint.textContent = m === 'python' ? kbd('⌘ + enter runs it') : 'enter writes · shift + enter for a new line';
     }
     function submit() {
       const text = ta.value;
@@ -1314,13 +1318,13 @@
 
   // ------------------------------------------------------------ fonts & zoom
   function setFont(name) {
-    document.documentElement.style.setProperty('--font-hand', `"${name}", "Chalkboard SE", "Chalkboard", cursive`);
+    document.documentElement.style.setProperty('--font-hand', `"${name}", "Chalkboard SE", "Patrick Hand", cursive`);
     try { localStorage.setItem('ee.font', name); } catch (e) { /* storage may be unavailable */ }
     dom.fontBtn.title = 'Chalk font: ' + name;
     scheduleOverlay();
   }
   function cycleFont() {
-    let cur = 'Chalkboard SE';
+    let cur = DEFAULT_FONT;
     try { cur = localStorage.getItem('ee.font') || cur; } catch (e) { /* ignore */ }
     setFont(FONTS[(FONTS.indexOf(cur) + 1) % FONTS.length]);
     toast('Chalk font: ' + getComputedStyle(document.documentElement).getPropertyValue('--font-hand').split(',')[0].replace(/"/g, ''));
@@ -1650,7 +1654,7 @@
     dom.summaryBtn.classList.toggle('on', S.summaryOpen);
     dom.summaryBtn.classList.toggle('stale', !!sum && st.fresh > 0);
     dom.summaryBtn.title = (sum ? `Summary of this board (written ${EE.util.relTime(sum.createdAt)})` : 'Summarize this board: the main question and every side question') +
-      (sum && st.fresh ? `\n${st.fresh} question${st.fresh === 1 ? '' : 's'} asked since` : '') + ' (⇧⌘S)';
+      (sum && st.fresh ? `\n${st.fresh} question${st.fresh === 1 ? '' : 's'} asked since` : '') + kbd(' (⇧⌘S)');
     if (!S.summaryOpen) return;
     const sig = JSON.stringify([b.id, sum && sum.createdAt, job && [job.running, job.text.length, job.reasoning.length, job.error], st, ready, S.config && S.config.model]);
     if (!force && sig === summarySig) return;
@@ -1852,6 +1856,11 @@
       noteSave: $('note-save'), noteCancel: $('note-cancel'), learnerPrompt: $('learner-prompt-text'), learnerBase: $('learner-base-text'),
       summary: $('summary'), summaryContent: $('summary-content'), summaryBtn: $('btn-summary'),
     });
+    // shortcut hints in the static markup are written for a Mac; reword them for this platform
+    if (!IS_MAC) {
+      document.querySelectorAll('[title]').forEach((n) => { n.title = kbd(n.title); });
+      document.querySelectorAll('.note-actions .small').forEach((n) => { n.textContent = kbd(n.textContent); });
+    }
     document.addEventListener('click', onClick);
     dom.backBtn.addEventListener('click', closeAll);
     $('ledge-eraser').addEventListener('click', closeAll);
@@ -1913,8 +1922,9 @@
       closeLast();
     });
 
-    let font = 'Chalkboard SE';
+    let font = DEFAULT_FONT;
     try { font = localStorage.getItem('ee.font') || font; } catch (e) { /* ignore */ }
+    if (!FONTS.includes(font)) font = DEFAULT_FONT; // a face from another platform
     setFont(font);
     if (document.fonts) document.fonts.ready.then(scheduleOverlay);
   }

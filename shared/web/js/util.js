@@ -93,6 +93,20 @@ EE.util = (() => {
   /** KaTeX inserts zero-width spaces; hide them when showing quotes. */
   const clean = (s) => String(s || '').replace(/[\u200b\u200c\u200d\u2060]/g, '');
 
+  const IS_MAC = /Mac/i.test(navigator.platform);
+  const MODS = { '⌃': 'Ctrl', '⌘': 'Ctrl', '⌥': 'Alt', '⇧': 'Shift' };
+  const MOD_ORDER = ['Ctrl', 'Alt', 'Shift'];
+  const KEYS = { '⌫': 'Backspace', '⏎': 'Enter', '↩': 'Enter', '−': '-' };
+  /** Shortcut text for this platform: "⇧⌘S" stays on a Mac and reads "Ctrl+Shift+S" elsewhere. */
+  function kbd(s) {
+    if (IS_MAC) return s;
+    return String(s ?? '').replace(/([⌃⌥⇧⌘]+)(?:\s*\+\s*)?([^\s()⌃⌥⇧⌘,.]+)?/g, (m, mods, key) => {
+      const names = [...new Set([...mods].map((c) => MODS[c]))].sort((a, b) => MOD_ORDER.indexOf(a) - MOD_ORDER.indexOf(b));
+      const k = key == null ? '' : KEYS[key] || key;
+      return names.join('+') + (k ? '+' + k : '');
+    });
+  }
+
   function relTime(ms) {
     const d = (Date.now() - ms) / 1000;
     if (d < 60) return 'just now';
@@ -101,5 +115,5 @@ EE.util = (() => {
     return new Date(ms).toLocaleDateString();
   }
 
-  return { uid, el, esc, debounce, sleep, truncate, hash, rng, plainTitle, texToText, clean, relTime };
+  return { uid, el, esc, debounce, sleep, truncate, hash, rng, plainTitle, texToText, clean, relTime, kbd, IS_MAC };
 })();

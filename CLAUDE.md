@@ -53,18 +53,22 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+make test            # unit tests for this OS (macOS: swift test in macos/; Linux: pytest in linux/)
+make run             # macOS: build and open the .app; Linux: start the GTK app from the tree
+make selftest        # end-to-end self test inside the real app against the configured LLM (/tmp/ee-selftest)
+make dev             # browser harness with a Node bridge at http://127.0.0.1:5178
 ```
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+One web UI (`shared/web`, plain JS) hosted by two native shells that implement the same JS bridge:
+`macos/` (Swift package: EECore + SwiftUI/WKWebView) and `linux/` (Python package `equation_explainer`:
+GTK4/libadwaita + WebKitGTK 6.0). `shared/python` is the cell runner and `boardkit`. The core in each shell
+(config, streaming LLM client, board store, Python runner) is a line-for-line port of the other; keep them in sync.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- `.env` keys and their problem messages are identical on both platforms; add new keys to both cores and both test suites.
+- Anything the page needs from the native side goes through the bridge command switch (`handle`) in both shells.
+- Shortcut labels in the UI are written for a Mac and converted with `EE.util.kbd` elsewhere.

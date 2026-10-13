@@ -1,3 +1,12 @@
+/* ===================================================================== chalk fonts
+   macOS ships Chalkboard SE and Chalkduster; elsewhere these OFL faces (shared/web/fonts) stand in. */
+@font-face { font-family: "Patrick Hand"; src: local("Patrick Hand"), local("PatrickHand-Regular"), url(../fonts/PatrickHand-Regular.ttf) format("truetype"); font-display: swap; }
+@font-face { font-family: "Fredericka the Great"; src: local("Fredericka the Great"), local("FrederickatheGreat-Regular"), url(../fonts/FrederickatheGreat-Regular.ttf) format("truetype"); font-display: swap; }
+@font-face { font-family: "Architects Daughter"; src: local("Architects Daughter"), local("ArchitectsDaughter-Regular"), url(../fonts/ArchitectsDaughter-Regular.ttf) format("truetype"); font-display: swap; }
+@font-face { font-family: "Gloria Hallelujah"; src: local("Gloria Hallelujah"), local("GloriaHallelujah"), url(../fonts/GloriaHallelujah.ttf) format("truetype"); font-display: swap; }
+@font-face { font-family: "Shadows Into Light"; src: local("Shadows Into Light"), local("ShadowsIntoLight"), url(../fonts/ShadowsIntoLight.ttf) format("truetype"); font-display: swap; }
+@font-face { font-family: "Gochi Hand"; src: local("Gochi Hand"), local("GochiHand-Regular"), url(../fonts/GochiHand-Regular.ttf) format("truetype"); font-display: swap; }
+
 /* ===================================================================== tokens */
 :root {
   --slate: #253129;
@@ -15,9 +24,9 @@
   --blue: #9ccfee;
   --green: #b9e4a0;
   --orange: #f5c38c;
-  --font-hand: "Chalkboard SE", "Chalkboard", "Noteworthy", cursive;
-  --font-title: "Chalkduster", "Chalkboard SE", cursive;
-  --font-code: "SF Mono", Menlo, Monaco, monospace;
+  --font-hand: "Chalkboard SE", "Chalkboard", "Noteworthy", "Patrick Hand", cursive;
+  --font-title: "Chalkduster", "Fredericka the Great", "Chalkboard SE", cursive;
+  --font-code: "SF Mono", Menlo, Monaco, "DejaVu Sans Mono", "Ubuntu Mono", monospace;
   --dg-fill: rgba(36, 48, 40, 0.96); /* inside diagram shapes: slate, so wires and edges stop at the edge */
   --root-w: clamp(520px, 50vw, 860px);
   --branch-w: clamp(440px, 40vw, 660px);

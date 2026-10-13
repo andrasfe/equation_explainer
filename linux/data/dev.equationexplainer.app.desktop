@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Equation Explainer
+Comment=A blackboard for digging into mathematics and quantum algorithms with an LLM
+Exec=__EXEC__
+Icon=equation-explainer
+Terminal=false
+Categories=Education;Science;Math;
+Keywords=math;physics;quantum;LaTeX;tutor;
+StartupNotify=true
+StartupWMClass=dev.equationexplainer.app

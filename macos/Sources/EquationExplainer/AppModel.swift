@@ -27,15 +27,16 @@ final class AppModel: ObservableObject {
 
     init() {
         let fm = FileManager.default
-        // Project root: baked into Info.plist by the build script; falls back to the source tree for `swift run`.
-        let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        // Project root (the repo, where .env lives): baked into Info.plist by the build script; falls back to the source tree for `swift run`.
+        let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
         let plistRoot = Bundle.main.object(forInfoDictionaryKey: "EEProjectRoot") as? String
         projectRoot = plistRoot ?? sourceRoot.path
 
-        if let r = Bundle.main.resourceURL, fm.fileExists(atPath: r.appendingPathComponent("Web/index.html").path) {
+        if let r = Bundle.main.resourceURL, fm.fileExists(atPath: r.appendingPathComponent("web/index.html").path) {
             resources = r
         } else {
-            resources = sourceRoot.appendingPathComponent("App")
+            resources = sourceRoot.appendingPathComponent("shared")
         }
 
         let support = AppPaths.supportDir
@@ -46,8 +47,8 @@ final class AppModel: ObservableObject {
             boardsDir = support.appendingPathComponent("Boards", isDirectory: true)
         }
         store = BoardStore(dir: boardsDir)
-        runner = PythonRunner(supportDir: support, kitDir: resources.appendingPathComponent("Python"))
-        web = WebController(webRoot: resources.appendingPathComponent("Web"))
+        runner = PythonRunner(supportDir: support, kitDir: resources.appendingPathComponent("python"))
+        web = WebController(webRoot: resources.appendingPathComponent("web"))
 
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--selftest"), i + 1 < args.count {
@@ -139,7 +140,7 @@ final class AppModel: ObservableObject {
         let str = { (k: String) in body[k] as? String ?? "" }
         switch cmd {
         case "ready":
-            var reply: [String: Any] = ["native": true]
+            var reply: [String: Any] = ["native": true, "platform": "macos"]
             if selfTest == nil, let last = UserDefaults.standard.string(forKey: "lastBoardId"),
                let data = try? store.load(last) {
                 reply["board"] = String(decoding: data, as: UTF8.self)

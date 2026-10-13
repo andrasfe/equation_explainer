@@ -1,0 +1,5 @@
+#!/bin/bash
+# Starts Equation Explainer from the source tree (no install needed).
+HERE="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m equation_explainer "$@"

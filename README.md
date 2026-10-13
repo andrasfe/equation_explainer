@@ -1,6 +1,6 @@
 # Equation Explainer
 
-A macOS blackboard for digging into mathematics and quantum algorithms with an LLM.
+A desktop blackboard (macOS and Linux) for digging into mathematics and quantum algorithms with an LLM.
 
 You write an equation or a question. The explanation is chalked onto the board step by step.
 **Highlight any part of it** (a phrase, a whole equation or just a piece of one) and ask a side
@@ -64,17 +64,39 @@ is saved with all of its branches, and the circled spots stay marked so you can 
     `grover_diffusion`, `probs`, `show()`).
   - Results render as math, and figures render as images. Failed runs get **fix it ↻**.
 - **Zoom.** Use ⌘= and ⌘−, or pinch. Click ⤢ on any displayed equation for a magnifying lens.
-- **Chalk look.** Slate texture, a wooden frame and handwritten fonts (Chalkboard SE, Chalkduster,
-  Bradley Hand, Noteworthy, Marker Felt). Switch fonts with **Aa**.
+- **Chalk look.** Slate texture, a wooden frame and handwritten fonts: on macOS the system faces (Chalkboard SE,
+  Chalkduster, Bradley Hand, Noteworthy, Marker Felt), elsewhere OFL faces bundled in `shared/web/fonts` (Patrick
+  Hand, Architects Daughter, Gloria Hallelujah, Shadows Into Light, Gochi Hand, Fredericka the Great). Switch with **Aa**.
 
 ## Setup
 
 ```bash
-cp .env.example .env      # then pick a provider
-make run                  # builds "build/Equation Explainer.app" and opens it
+cp .env.example .env      # then pick a provider (see the table below)
+make run                  # macOS: builds "build/Equation Explainer.app" and opens it
+                          # Linux: starts the GTK app from the source tree
 ```
 
-`.env` is re-read on every request, so edits apply immediately. **Board ▸ Open .env** opens it.
+### macOS
+
+Needs Xcode's command line tools (Swift 5.9, macOS 14). `make run` builds the app bundle and opens it;
+`make mac-app` only builds it.
+
+### Linux (Ubuntu 24.04 or any distribution with GTK 4, libadwaita 1.5 and WebKitGTK 6.0)
+
+```bash
+sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-webkit-6.0 python3-venv
+make run              # or linux/bin/equation-explainer
+make linux-install    # adds it to the app grid for this user: launcher, icon and the chalk fonts
+```
+
+The Linux app is Python 3 (PyGObject) around the same blackboard UI, in a WebKitGTK view with a native
+libadwaita board list; nothing is installed from PyPI. It needs a working WebKit web-process sandbox
+(bubblewrap): if it stops at start with a note about bubblewrap and user namespaces, follow that note.
+
+### Configuration
+
+`.env` is re-read on every request, so edits apply immediately. **Board ▸ Open .env** (the ☰ menu on Linux)
+opens it.
 
 | key | meaning |
 | --- | --- |
@@ -89,39 +111,63 @@ make run                  # builds "build/Equation Explainer.app" and opens it
 | `PYTHON_PATH` | use your own interpreter instead of the managed environment |
 | `PYTHON_PACKAGES`, `PYTHON_TIMEOUT` | packages for the managed environment, and the per-run time limit in seconds |
 
-The first ▶ Execute creates a managed virtualenv in `~/Library/Application Support/EquationExplainer/pyenv`.
-This takes about a minute and happens only once. Boards are JSON files in
-`~/Library/Application Support/EquationExplainer/Boards` (**Board ▸ Reveal Boards Folder**).
-The learner profile (`learner.json`) and your notes (`learner-notes.json`) sit next to that folder. Both are
-written owner-only (0600), never live in the repository, and are git-ignored as a safety net.
+To run everything on OpenRouter (explanations, summaries, the level-set and diagrams), set
+`LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY`; the board summary is written by the board's model.
+
+### Where things live
+
+| | macOS | Linux |
+| --- | --- | --- |
+| boards (one JSON file each) | `~/Library/Application Support/EquationExplainer/Boards` | `~/.local/share/EquationExplainer/Boards` |
+| learner profile and your notes | next to the Boards folder, written owner-only (0600) | same |
+| managed Python environment | `…/EquationExplainer/pyenv` | `…/EquationExplainer/pyenv` |
+
+`EE_DATA_DIR` moves the whole folder, `EE_BOARDS_DIR` only the boards, `EE_ENV_FILE` points at another
+`.env`. The first ▶ Execute creates the managed virtualenv (about a minute, once). **Board ▸ Reveal Boards
+Folder** opens the folder. The learner files never live in the repository and are git-ignored as a safety net.
 
 ## Keys
 
-| | |
-| --- | --- |
-| highlight text, then pick a question | open a side question to the right |
-| click a circled or underlined spot | reopen or close its side question |
-| `Esc` or `⌘[` | close the rightmost side question |
-| `⇧⌘⌫` | back to the original (close all) |
-| `⇧⌘M` / `⌥⌘M` | board map / insert matrix |
-| `⇧⌘S` | board summary |
-| `⇧⌘L` / `⌥⌘L` | level-set now / where you stand and my notes (`⌘Enter` saves a note) |
-| `Enter` / `Shift+Enter` | write / new line (`⌘Enter` runs in python mode) |
+macOS uses ⌘, Linux uses Ctrl; the tooltips in the app show the right one.
+
+| | macOS | Linux |
+| --- | --- | --- |
+| highlight text, then pick a question | opens a side question to the right | |
+| click a circled or underlined spot | reopens or closes its side question | |
+| close the rightmost side question | `Esc` or `⌘[` | `Esc` or `Ctrl+[` |
+| back to the original (close all) | `⇧⌘⌫` | `Ctrl+Shift+Backspace` |
+| board map / insert matrix | `⇧⌘M` / `⌥⌘M` | `Ctrl+Shift+M` / `Ctrl+Alt+M` |
+| board summary | `⇧⌘S` | `Ctrl+Shift+S` |
+| level-set now / where you stand and my notes | `⇧⌘L` / `⌥⌘L` | `Ctrl+Shift+L` / `Ctrl+Alt+L` |
+| new board / write on the board | `⌘N` / `⌘L` | `Ctrl+N` / `Ctrl+L` |
+| zoom in / out / actual size | `⌘=` / `⌘−` / `⌘0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+| write / new line | `Enter` / `Shift+Enter` (`⌘Enter` runs in python mode, saves a note) | same with `Ctrl+Enter` |
 
 ## Development
 
 ```bash
-make test       # Swift unit tests (config, SSE parsing, storage, python runner)
+make test       # unit tests for this OS: Swift (macOS) or pytest (Linux): config, SSE parsing, streaming, storage, python runner
 make dev        # same UI in a browser at http://127.0.0.1:5178 with a Node bridge
 make selftest   # drives the real app end to end against your LLM and saves snapshots to /tmp/ee-selftest
+make help       # every target, including the explicit mac-* and linux-* ones
 ```
 
 Layout:
 
-- `Sources/EECore` holds the testable core: `.env` and config, the streaming client, the Python runner and board storage.
-- `Sources/EquationExplainer` is the SwiftUI shell, the WKWebView host and the JS bridge.
-- `App/Web` is the blackboard UI in plain JS, with vendored KaTeX, marked, DOMPurify, highlight.js and dagre (diagram layout).
-- `App/Python` holds the cell runner, `boardkit` and the matplotlib chalk style.
+- `shared/web` is the blackboard UI in plain JS, used unchanged by both apps and the dev harness, with vendored
+  KaTeX, marked, DOMPurify, highlight.js and dagre (diagram layout), and the chalk fonts for non-Mac platforms.
+- `shared/python` holds the cell runner, `boardkit` and the matplotlib chalk style.
+- `macos/` is the Swift package: `Sources/EECore` (the testable core: `.env` and config, the streaming client,
+  the Python runner, board storage), `Sources/EquationExplainer` (the SwiftUI shell, the WKWebView host and the
+  JS bridge), `Tests/`, and `scripts/build_app.sh`, which assembles the `.app` at `build/`.
+- `linux/` is the Python package `equation_explainer`: `config.py`, `llm.py`, `store.py` and `pyrunner.py` are
+  the same core as `EECore`; `app.py` is the GTK4 / libadwaita shell, the WebKitGTK host and the JS bridge.
+  `tests/` are pytest, `bin/equation-explainer` runs it from the tree, `data/` has the desktop entry and icon.
+- `dev/devserver.mjs` serves the UI to a browser with the bridge over HTTP.
+
+Both apps implement the same bridge: the page sends `{cmd, …}` messages (`config`, `chat`, `python`,
+`saveBoard`, …) and receives streamed tokens through `EE.native.chunk/done/error`; the self test in
+`shared/web/js/selftest.js` exercises all of it inside whichever app is running.
 
 ## License
 
@@ -136,5 +182,6 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
 additional terms or conditions.
 
-The vendored libraries in `App/Web/vendor` keep their own licenses: KaTeX, marked and dagre (MIT),
-DOMPurify (Apache-2.0 or MPL-2.0) and highlight.js (BSD-3-Clause).
+The vendored libraries in `shared/web/vendor` keep their own licenses: KaTeX, marked and dagre (MIT),
+DOMPurify (Apache-2.0 or MPL-2.0) and highlight.js (BSD-3-Clause). The fonts in `shared/web/fonts` are under the
+SIL Open Font License 1.1 (their `OFL-*.txt` files sit next to them).

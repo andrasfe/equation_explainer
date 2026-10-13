@@ -17,7 +17,7 @@ def write_png(path, w, h, rows, channels):
     with open(path, "wb") as f:
         f.write(png)
 
-out = os.path.join(os.path.dirname(__file__), "..", "App", "Web", "img")
+out = os.path.join(os.path.dirname(__file__), "..", "shared", "web", "img")
 rnd = random.Random(7)
 
 # Chalk grain: mostly opaque, with speckled gaps (grey+alpha).

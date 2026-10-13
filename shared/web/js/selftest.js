@@ -9,10 +9,13 @@ EE.selfTest = async function selfTest(opts = {}) {
   const report = { ok: true, steps: [], startedAt: new Date().toISOString() };
   const log = (message) => { console.log('[selftest] ' + message); return B.call('selftest', { event: 'log', message }).catch(() => {}); };
   // a snapshot never finishes while the display sleeps; don't let that hang the run
-  const snap = (name) => Promise.race([
-    B.call('selftest', { event: 'snapshot', name }).catch((e) => log('snapshot failed: ' + e.message)),
-    sleep(15000).then(() => log(`snapshot ${name} skipped (no frame in 15 s; is the display asleep?)`)),
-  ]);
+  const snap = (name) => {
+    let taken = false;
+    return Promise.race([
+      B.call('selftest', { event: 'snapshot', name }).catch((e) => log('snapshot failed: ' + e.message)).finally(() => { taken = true; }),
+      sleep(15000).then(() => (taken ? null : log(`snapshot ${name} skipped (no frame in 15 s; is the display asleep?)`))),
+    ]);
+  };
   const waitFor = async (pred, ms, what) => {
     const end = Date.now() + ms;
     while (Date.now() < end) { if (pred()) return; await sleep(250); }

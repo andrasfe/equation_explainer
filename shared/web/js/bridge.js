@@ -10,9 +10,20 @@ EE.bridge = (() => {
   const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ee;
   const isNative = !!handler;
   const chats = new Map(); // id -> {onChunk, onDone, onError, ctrl}
+  const replies = new Map(); // rid -> {resolve, reject}: answers a native side sends later through EE.native.reply
 
   async function call(cmd, payload = {}) {
-    if (isNative) return handler.postMessage({ cmd, ...payload });
+    if (isNative) {
+      // The Linux app acknowledges at once and answers through EE.native.reply when the work is done;
+      // the answer is awaited under a key chosen here, so it cannot arrive before anyone waits for it.
+      const rid = EE.util.uid('m');
+      const answer = new Promise((resolve, reject) => replies.set(rid, { resolve, reject }));
+      answer.catch(() => {}); // only awaited when the reply is deferred
+      const r = await handler.postMessage({ cmd, ...payload, _rid: rid });
+      if (r && typeof r === 'object' && r.__deferred) return answer;
+      replies.delete(rid);
+      return r;
+    }
     const res = await fetch('/bridge', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -36,6 +47,12 @@ EE.bridge = (() => {
     const h = chats.get(id);
     chats.delete(id);
     if (h) h.onError(new Error(message || 'Unknown error'));
+  };
+  EE.native.reply = ({ rid, result, error }) => {
+    const p = replies.get(rid);
+    if (!p) return;
+    replies.delete(rid);
+    if (error != null) p.reject(new Error(error)); else p.resolve(result === undefined ? null : result);
   };
 
   /** Start a streamed chat completion. Returns {id, cancel()}.

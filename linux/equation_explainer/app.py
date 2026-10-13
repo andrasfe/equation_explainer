@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -139,16 +140,18 @@ class WebController:
             reply.return_error_message("App is shutting down")
             return True
 
+        # Acknowledge right away, inside the signal handler, and deliver the answer later through
+        # EE.native.reply: a WebKitGTK reply object answered seconds later (a long Python run) reached
+        # the page as `undefined`, while calls into the page always arrive.
+        rid = body.get("_rid") if isinstance(body.get("_rid"), str) else uuid.uuid4().hex
+        reply.return_value(JavaScriptCore.Value.new_from_json(value.get_context(), json.dumps({"__deferred": rid})))
+        if DEBUG:
+            log(f"bridge <- {cmd} ({rid[:8]})")
+
         def done(result: Any, error: Optional[str]) -> None:
-            # back on the main thread; `value` keeps the JS context alive until we reply
-            try:
-                if error is not None:
-                    reply.return_error_message(error)
-                else:
-                    ctx = value.get_context()
-                    reply.return_value(JavaScriptCore.Value.new_from_json(ctx, json.dumps(result if result is not None else None)))
-            except Exception:  # noqa: BLE001
-                log("could not reply to the page:\n" + traceback.format_exc())
+            if DEBUG:
+                log(f"bridge -> {cmd} ({rid[:8]}) {'error ' + error if error else 'ok'}")
+            self.call("EE.native.reply", {"rid": rid, "result": result, "error": error})
 
         model.dispatch(cmd, body, done)
         return True
@@ -156,7 +159,7 @@ class WebController:
     # ---- Python -> JS
     def call(self, function: str, arg: Optional[dict] = None) -> None:
         """Call a page function with one JSON argument (main thread only)."""
-        script = f"{function}({json.dumps(arg or {})})"
+        script = f"void {function}({json.dumps(arg or {})})"  # void: a returned promise is not a result WebKit can hand back
 
         def finished(view, result, _data=None) -> None:
             try:
@@ -621,6 +624,7 @@ class AppModel:
         def run() -> None:
             model: Optional[str] = None
             finish: Optional[str] = None
+            got = {"content": 0, "reasoning": 0}
             try:
                 for d in client.stream(messages, handle):
                     if handle.cancelled.is_set():
@@ -630,9 +634,18 @@ class AppModel:
                     if d.finish_reason:
                         finish = d.finish_reason
                     if d.content or d.reasoning:
+                        got["content"] += len(d.content)
+                        got["reasoning"] += len(d.reasoning)
                         self.web.enqueue_chunk(chat_id, d.content, d.reasoning)
                 if not handle.cancelled.is_set():
                     self.web.finish_chat(chat_id, model, finish)
+                if DEBUG:
+                    log(f"chat {chat_id} ({purpose}) finished: model={model} finish={finish} content={got['content']} reasoning={got['reasoning']}")
+                    if not got["content"]:  # keep the request that produced no answer, to look at
+                        dump = self.support / "debug" / f"empty-{chat_id}.json"
+                        dump.parent.mkdir(parents=True, exist_ok=True)
+                        dump.write_text(json.dumps({"purpose": purpose, "model": model, "finish": finish, "settings": vars(settings),
+                                                    "messages": messages, "reasoning_chars": got["reasoning"]}, indent=1, default=str))
             except Exception as e:  # noqa: BLE001
                 if not handle.cancelled.is_set():
                     self.web.fail_chat(chat_id, describe(e, settings))
@@ -673,7 +686,13 @@ class AppModel:
         if event == "finish":
             (out / "report.json").write_text(str(body.get("report") or "{}"), encoding="utf-8")
             if self.self_test and not self.self_test.keep_open:
-                GLib.timeout_add(1000, lambda: (self.window.close() if self.window else None, False)[1])
+                def close_window() -> bool:
+                    if DEBUG:
+                        log(f"self test finished; closing the window ({self.window!r})")
+                    if self.window:
+                        self.window.close()
+                    return False
+                GLib.timeout_add(1000, close_window)
             return {"ok": True}
         return {"ok": True}
 
@@ -955,10 +974,14 @@ class MainWindow(Adw.ApplicationWindow):
         if self._closing:
             return False
         self._closing = True
+        if DEBUG:
+            log("close requested; flushing the boards")
         self.model.flush_then(self._finish_close)
         return True
 
     def _finish_close(self) -> None:
+        if DEBUG:
+            log("boards flushed; destroying the window")
         self.model.shutdown()
         self.destroy()
 

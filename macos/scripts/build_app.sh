@@ -7,6 +7,7 @@ ROOT="$(cd "$PKG/.." && pwd)"               # the repo: .env, shared/web, shared
 CONFIG="${1:-release}"
 APP="$ROOT/build/Equation Explainer.app"
 cd "$PKG"
+command -v swift >/dev/null || { echo "swift not found: install Xcode's command line tools (xcode-select --install)" >&2; exit 1; }
 
 swift build -c "$CONFIG" --product EquationExplainer
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/EquationExplainer"

@@ -249,8 +249,9 @@ kernel.apparmor_restrict_unprivileged_userns=1 and no AppArmor profile grants bw
 Fix it system-wide (one of):
   sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0     (and persist it in /etc/sysctl.d/)
   or install an AppArmor profile for /usr/bin/bwrap that allows userns
-Then start Equation Explainer again. (WebKitGTK also documents an environment switch to run without its
-sandbox; set it yourself if you accept that for a page that only talks to the model server.)"""
+Then start Equation Explainer again; `make run` (linux/scripts/setup.sh) checks this and prints the exact command.
+(WebKitGTK also documents an environment switch to run without its sandbox; set it yourself if you accept
+that for a page that only talks to the model server.)"""
 
 
 def bwrap_works() -> bool:

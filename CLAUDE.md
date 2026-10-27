@@ -55,7 +55,7 @@ bd close <id>         # Complete work
 
 ```bash
 make test            # unit tests for this OS (macOS: swift test in macos/; Linux: pytest in linux/)
-make run             # macOS: build and open the .app; Linux: start the GTK app from the tree
+make run             # creates .env if missing; macOS: build and open the .app; Linux: linux/scripts/setup.sh (packages, sandbox check) then the GTK app
 make selftest        # end-to-end self test inside the real app against the configured LLM (/tmp/ee-selftest)
 make dev             # browser harness with a Node bridge at http://127.0.0.1:5178
 ```

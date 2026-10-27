@@ -71,9 +71,9 @@ is saved with all of its branches, and the circled spots stay marked so you can 
 ## Setup
 
 ```bash
-cp .env.example .env      # then pick a provider (see the table below)
-make run                  # macOS: builds "build/Equation Explainer.app" and opens it
-                          # Linux: starts the GTK app from the source tree
+make run                  # creates .env from .env.example on the first run (put your key in it, see below)
+                          # macOS: builds "build/Equation Explainer.app" and opens it
+                          # Linux: installs missing GTK/WebKitGTK packages, checks WebKit's sandbox, starts the app
 ```
 
 ### macOS
@@ -84,14 +84,17 @@ Needs Xcode's command line tools (Swift 5.9, macOS 14). `make run` builds the ap
 ### Linux (Ubuntu 24.04 or any distribution with GTK 4, libadwaita 1.5 and WebKitGTK 6.0)
 
 ```bash
-sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-webkit-6.0 python3-venv
-make run              # or linux/bin/equation-explainer
+make run              # first run: apt-installs python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-webkit-6.0 python3-venv
+                      # bubblewrap if missing (sudo asks for your password), then starts the app
 make linux-install    # adds it to the app grid for this user: launcher, icon and the chalk fonts
 ```
 
 The Linux app is Python 3 (PyGObject) around the same blackboard UI, in a WebKitGTK view with a native
-libadwaita board list; nothing is installed from PyPI. It needs a working WebKit web-process sandbox
-(bubblewrap): if it stops at start with a note about bubblewrap and user namespaces, follow that note.
+libadwaita board list; nothing is installed from PyPI. WebKit sandboxes its web process with bubblewrap,
+which needs unprivileged user namespaces. Ubuntu 24.04 forbids those by default
+(`kernel.apparmor_restrict_unprivileged_userns=1`), so `make run` stops once with the one-time command to
+allow them (a sysctl file under `/etc/sysctl.d/`). It never changes that setting itself. `make linux-setup`
+runs just the checks; `EE_SKIP_SETUP=1 make run` skips them.
 
 ### Configuration
 

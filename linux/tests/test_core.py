@@ -349,6 +349,17 @@ def test_shared_assets_present():
     assert (r / "web" / "fonts" / "PatrickHand-Regular.ttf").exists()
 
 
+def test_setup_script_checks_without_changing_anything():
+    # `make run` calls it first: --check only reports (0 ready, 2 something to do) and prints why
+    import subprocess
+    script = REPO / "linux" / "scripts" / "setup.sh"
+    assert subprocess.run(["bash", "-n", str(script)]).returncode == 0
+    r = subprocess.run([str(script), "--check"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+    assert r.returncode in (0, 2)
+    if r.returncode == 2:
+        assert "[equation-explainer setup]" in r.stdout
+
+
 def test_tempdir_cleanup_safety():
     # the runner must never leave run folders behind, even when the cell fails to start
     d = Path(tempfile.mkdtemp())

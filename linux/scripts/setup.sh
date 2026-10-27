@@ -4,16 +4,17 @@
 #     (installed with apt through sudo, only when something is missing)
 #  2. WebKit's web-process sandbox: bubblewrap must be able to create a user namespace. Ubuntu 24.04 forbids
 #     that for unprivileged programs (kernel.apparmor_restrict_unprivileged_userns=1) unless an AppArmor profile
-#     grants it. That is a security setting of your machine, so this script never changes it: it tells you
-#     the one-time command and stops.
+#     grants it. With your yes at the prompt it sets kernel.apparmor_restrict_unprivileged_userns=0 through
+#     sudo, persisted in /etc/sysctl.d so it survives reboots (one time).
 # Every step is a no-op once done, so the usual cost is a few milliseconds.
-#   usage: linux/scripts/setup.sh [--check]      --check only reports (exit 0 ready, 2 not), never installs
+#   usage: linux/scripts/setup.sh [--check]      --check only reports (exit 0 ready, 2 not), never changes anything
 #   EE_SKIP_SETUP=1 skips it entirely.
 set -uo pipefail
 CHECK=0; [ "${1:-}" = "--check" ] && CHECK=1
 say() { echo "[equation-explainer setup] $*"; }
 PACKAGES="python3 python3-gi python3-venv gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-webkit-6.0 bubblewrap"
 SYSCTL_KEY="kernel.apparmor_restrict_unprivileged_userns"
+SYSCTL_FILE="${EE_SYSCTL_DIR:-/etc/sysctl.d}/60-equation-explainer-userns.conf"
 
 # ---- 1. packages ------------------------------------------------------------------------------------------
 gi_ok() {
@@ -52,19 +53,31 @@ if ! gi_ok || ! command -v bwrap >/dev/null; then
 fi
 
 # ---- 2. WebKit's sandbox (bubblewrap + user namespaces) ---------------------------------------------------
-if ! timeout 10 bwrap --unshare-user --ro-bind / / --proc /proc --dev /dev true >/dev/null 2>&1; then
-  if [ "$(sysctl -n "$SYSCTL_KEY" 2>/dev/null || echo "")" = "1" ]; then
-    say "WebKit's sandbox (bubblewrap) cannot create a user namespace: $SYSCTL_KEY=1 (Ubuntu 24.04 default)."
-    say "Equation Explainer would crash as soon as the board loads. Allow it once, for good (survives reboots):"
-    echo
-    echo "    echo '$SYSCTL_KEY = 0' | sudo tee /etc/sysctl.d/60-equation-explainer-userns.conf && sudo sysctl -p /etc/sysctl.d/60-equation-explainer-userns.conf"
-    echo
-    say "(This lets unprivileged programs create user namespaces, as most other distributions already do."
-    say " The alternative is an AppArmor profile for /usr/bin/bwrap that allows 'userns'.) Then run \`make run\` again."
-  else
+bwrap_works() { timeout 10 bwrap --unshare-user --ro-bind / / --proc /proc --dev /dev true >/dev/null 2>&1; }
+if ! bwrap_works; then
+  if [ "$(sysctl -n "$SYSCTL_KEY" 2>/dev/null || echo "")" != "1" ]; then
     say "bubblewrap cannot create a user namespace here and the cause is not $SYSCTL_KEY;"
     say "WebKit's web process would crash at start. Check the kernel's user-namespace settings (unprivileged_userns_clone)."
+    exit 2
   fi
-  exit 2
+  CMD="echo '$SYSCTL_KEY = 0' | sudo tee $SYSCTL_FILE && sudo sysctl -p $SYSCTL_FILE"
+  say "WebKit's sandbox (bubblewrap) is blocked: $SYSCTL_KEY=1 (Ubuntu 24.04 default)."
+  say "Without it the app crashes as soon as the board loads. The fix sets it to 0, persisted in"
+  say "$SYSCTL_FILE so it survives reboots. It lets unprivileged programs create user"
+  say "namespaces, as most other distributions allow, and applies to the whole machine, not just this app."
+  [ $CHECK = 1 ] && exit 2
+  if [ -t 0 ] && [ -t 1 ]; then
+    read -r -p "[equation-explainer setup] Apply it now with sudo? [y/N] " answer
+    case "$answer" in
+      y|Y|yes|YES) ;;
+      *) say "left unchanged. When you want it:"; echo "    $CMD"; exit 2 ;;
+    esac
+  elif ! sudo -n true 2>/dev/null; then
+    say "not an interactive terminal, so run this yourself once:"; echo "    $CMD"; exit 2
+  fi
+  printf '# Equation Explainer: WebKitGTK sandboxes its web process with bubblewrap, which needs user namespaces.\n%s = 0\n' "$SYSCTL_KEY" \
+    | sudo tee "$SYSCTL_FILE" >/dev/null && sudo sysctl -q -p "$SYSCTL_FILE" || { say "could not apply it"; exit 2; }
+  bwrap_works || { say "applied, but bubblewrap still cannot create a user namespace; WebKit would crash at start"; exit 2; }
+  say "WebKit's sandbox works now."
 fi
 exit 0

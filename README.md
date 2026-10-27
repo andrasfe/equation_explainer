@@ -92,9 +92,9 @@ make linux-install    # adds it to the app grid for this user: launcher, icon an
 The Linux app is Python 3 (PyGObject) around the same blackboard UI, in a WebKitGTK view with a native
 libadwaita board list; nothing is installed from PyPI. WebKit sandboxes its web process with bubblewrap,
 which needs unprivileged user namespaces. Ubuntu 24.04 forbids those by default
-(`kernel.apparmor_restrict_unprivileged_userns=1`), so `make run` stops once with the one-time command to
-allow them (a sysctl file under `/etc/sysctl.d/`). It never changes that setting itself. `make linux-setup`
-runs just the checks; `EE_SKIP_SETUP=1 make run` skips them.
+(`kernel.apparmor_restrict_unprivileged_userns=1`), so the first `make run` explains that and, after your
+yes, sets it to 0 with sudo, persisted in `/etc/sysctl.d/60-equation-explainer-userns.conf` so it survives
+reboots. `make linux-setup` runs just the checks; `EE_SKIP_SETUP=1 make run` skips them.
 
 ### Configuration
 

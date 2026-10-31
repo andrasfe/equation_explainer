@@ -52,6 +52,19 @@ function loadEnv() {
   const cfg = { provider, envFile: fs.existsSync(file) ? file : null, problems: [],
     temperature: Number(get('LLM_TEMPERATURE') || 0.3), maxTokens: Number(get('LLM_MAX_TOKENS') || 8192), ...endpoint(provider) };
   if (provider === 'openrouter' && !cfg.apiKey) cfg.problems.push('OPENROUTER_API_KEY is not set');
+  // every model the top-bar menu offers: LLM_PROVIDER's first, then the other provider's, plus *_MODELS lists
+  const configured = { lmstudio: ['LMSTUDIO_BASE_URL', 'LMSTUDIO_MODEL', 'LMSTUDIO_MODELS', 'LMSTUDIO_API_KEY'].some(get),
+    openrouter: !!get('OPENROUTER_API_KEY'), custom: !!get('LLM_BASE_URL') };
+  const listKey = { lmstudio: 'LMSTUDIO_MODELS', openrouter: 'OPENROUTER_MODELS', custom: 'LLM_MODELS', openai: 'LLM_MODELS' };
+  cfg.choices = [];
+  for (const p of [provider, ...['lmstudio', 'openrouter', 'custom'].filter((x) => x !== provider && configured[x])]) {
+    const ep = endpoint(p);
+    const models = [ep.model];
+    for (const m of (get(listKey[p]) || '').split(/[\s,]+/)) if (m && !models.includes(m)) models.push(m);
+    for (const m of models) cfg.choices.push({ ...cfg, ...ep, provider: p, model: m, id: `${p}|${m || ''}`, choices: undefined,
+      problems: p === 'openrouter' && !ep.apiKey ? ['OPENROUTER_API_KEY is not set'] : [] });
+  }
+  cfg.choices[0].problems = cfg.problems;
   // level-set model: OpenRouter + openai/gpt-5.6-sol-pro unless overridden
   const lsProvider = (get('LEVELSET_PROVIDER') || 'openrouter').toLowerCase();
   const lsEp = endpoint(lsProvider);
@@ -122,12 +135,14 @@ async function bridge(msg) {
   switch (msg.cmd) {
     case 'ready': return { native: false };
     case 'config': {
-      const c = loadEnv();
+      const env = loadEnv();
+      const c = env.choices.find((x) => x.id === msg.llm) || env.choices[0];
       let model = c.model;
       try { model = await resolveModel(c); } catch (e) { c.problems.push(e.message); }
-      const ls = c.levelset, dg = c.diagram;
+      const ls = env.levelset, dg = env.diagram;
       const name = (p) => (p === 'openrouter' ? 'OpenRouter' : p === 'custom' || p === 'openai' ? 'Custom' : 'LM Studio');
-      return { provider: name(c.provider), model, baseURL: c.baseURL, envFile: c.envFile, problems: c.problems, python: VENV_PY, packages: 'numpy sympy scipy matplotlib',
+      return { provider: name(c.provider), model, baseURL: c.baseURL, envFile: env.envFile, problems: c.problems, python: VENV_PY, packages: 'numpy sympy scipy matplotlib',
+        llm: c.id, choices: env.choices.map((x) => ({ id: x.id, provider: name(x.provider), model: x.model || '', problems: x.problems })),
         levelset: { provider: name(ls.provider), model: ls.model || 'auto', problems: ls.problems },
         diagram: { provider: name(dg.provider), model: dg.model || 'auto', problems: dg.problems } };
     }
@@ -161,14 +176,14 @@ async function bridge(msg) {
 }
 
 async function chat(req, res) {
-  const { messages, purpose } = JSON.parse(await readBody(req));
+  const { messages, purpose, llm } = JSON.parse(await readBody(req));
   res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-cache' });
   const send = (o) => res.write(JSON.stringify(o) + '\n');
   const ctrl = new AbortController();
   res.on('close', () => ctrl.abort());
   try {
     const env = loadEnv();
-    const cfg = purpose === 'levelset' ? env.levelset : purpose === 'diagram' ? env.diagram : env;
+    const cfg = purpose === 'levelset' ? env.levelset : purpose === 'diagram' ? env.diagram : env.choices.find((x) => x.id === llm) || env.choices[0];
     if (cfg.problems.length) throw new Error(cfg.problems.join('; '));
     const model = await resolveModel(cfg);
     const headers = { 'content-type': 'application/json' };

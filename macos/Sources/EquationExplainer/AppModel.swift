@@ -154,17 +154,24 @@ final class AppModel: ObservableObject {
 
         case "config":
             let cfg = config
-            var problems = cfg.problems
-            var model = cfg.llm.model ?? "auto"
-            if cfg.llm.provider != .openrouter || cfg.llm.apiKey != nil {
-                do { model = try await LLMClient(settings: cfg.llm).resolveModel() } catch { problems.append(error.localizedDescription) }
+            // the model picked in the top bar (body "llm"), or LLM_PROVIDER's
+            let choice = cfg.choice(str("llm"))
+            let llm = choice.settings
+            var problems = choice.id == cfg.choices[0].id ? cfg.problems : choice.problems
+            var model = llm.model ?? "auto"
+            if llm.provider != .openrouter || llm.apiKey != nil {
+                do { model = try await LLMClient(settings: llm).resolveModel() } catch { problems.append(error.localizedDescription) }
+            }
+            let choices: [[String: Any]] = cfg.choices.map {
+                ["id": $0.id, "provider": $0.settings.displayName, "model": $0.settings.model ?? "", "problems": $0.problems]
             }
             let python = cfg.python.interpreter ?? runner.supportDir.appendingPathComponent("pyenv/bin/python").path
             let levelSet: [String: Any] = ["provider": cfg.levelSet.displayName, "model": cfg.levelSet.model ?? "auto",
                                            "problems": cfg.levelSetProblems]
             let diagram: [String: Any] = ["provider": cfg.diagram.displayName, "model": cfg.diagram.model ?? "auto",
                                           "problems": cfg.diagramProblems]
-            return ["provider": cfg.llm.displayName, "model": model, "baseURL": cfg.llm.baseURL.absoluteString,
+            return ["provider": llm.displayName, "model": model, "baseURL": llm.baseURL.absoluteString,
+                    "llm": choice.id, "choices": choices,
                     "envFile": cfg.envFile?.path ?? "", "problems": problems, "python": python,
                     "packages": cfg.python.packages.joined(separator: " "), "levelset": levelSet, "diagram": diagram]
 
@@ -172,7 +179,7 @@ final class AppModel: ObservableObject {
             let id = str("id")
             let raw = body["messages"] as? [[String: Any]] ?? []
             let messages = raw.map { ["role": $0["role"] as? String ?? "user", "content": $0["content"] as? String ?? ""] }
-            startChat(id: id, messages: messages, purpose: str("purpose"))
+            startChat(id: id, messages: messages, purpose: str("purpose"), llm: str("llm"))
             return ["ok": true]
 
         case "allBoards":
@@ -255,17 +262,17 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func startChat(id: String, messages: [[String: String]], purpose: String) {
+    private func startChat(id: String, messages: [[String: String]], purpose: String, llm: String) {
         let cfg = config
-        // each purpose has its own model: explanations (and summaries), the level-set, diagrams
+        // each purpose has its own model: explanations and summaries (the one picked in the top bar), the level-set, diagrams
         let settings: LLMSettings
         let problems: [String]
         switch purpose {
         case "levelset": (settings, problems) = (cfg.levelSet, cfg.levelSetProblems)
         case "diagram": (settings, problems) = (cfg.diagram, cfg.diagramProblems)
         default:
-            settings = cfg.llm
-            problems = cfg.llm.provider == .openrouter && cfg.llm.apiKey == nil
+            settings = cfg.choice(llm).settings
+            problems = settings.provider == .openrouter && settings.apiKey == nil
                 ? ["OPENROUTER_API_KEY is missing. Add it to \(cfg.envFile?.path ?? ".env") or set LLM_PROVIDER=lmstudio."] : []
         }
         if let problem = problems.first {

@@ -85,6 +85,25 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(local.diagramProblems.isEmpty)
     }
 
+    func testModelChoicesListEveryConfiguredModel() {
+        let c = AppConfig.resolve(values: ["LLM_PROVIDER": "lmstudio", "LMSTUDIO_MODEL": "gemma", "OPENROUTER_API_KEY": "k",
+                                           "OPENROUTER_MODEL": "openai/gpt", "OPENROUTER_MODELS": "a/b, openai/gpt c/d"], envFile: nil)
+        XCTAssertEqual(c.choices.map(\.id), ["lmstudio|gemma", "openrouter|openai/gpt", "openrouter|a/b", "openrouter|c/d"])
+        XCTAssertEqual(c.choices[0].settings, c.llm)                    // LLM_PROVIDER's model is the default
+        XCTAssertEqual(c.choice("openrouter|a/b").settings.model, "a/b")
+        XCTAssertEqual(c.choice("openrouter|a/b").settings.apiKey, "k")
+        XCTAssertEqual(c.choice("openrouter|a/b").settings.maxTokens, 8192)
+        XCTAssertEqual(c.choice("gone|x").id, "lmstudio|gemma")          // unknown pick falls back to the default
+
+        // no OpenRouter key: only LM Studio, whose blank model means the loaded one
+        let local = AppConfig.resolve(values: ["LLM_PROVIDER": "lmstudio"], envFile: nil)
+        XCTAssertEqual(local.choices.map(\.id), ["lmstudio|"])
+        // OpenRouter default; LM Studio is offered once .env mentions it
+        let both = AppConfig.resolve(values: ["OPENROUTER_API_KEY": "k", "LMSTUDIO_BASE_URL": "http://box:1234/v1"], envFile: nil)
+        XCTAssertEqual(both.choices.map(\.id), ["openrouter|anthropic/claude-fable-5.1", "lmstudio|"])
+        XCTAssertEqual(both.choice("lmstudio|").settings.baseURL.absoluteString, "http://box:1234/v1")
+    }
+
     func testTrailingSlashAndBadExtraBody() {
         let c = AppConfig.resolve(values: ["LMSTUDIO_BASE_URL": "http://box:1234/v1/", "LLM_EXTRA_BODY": "nope"], envFile: nil)
         XCTAssertEqual(c.llm.baseURL.absoluteString, "http://box:1234/v1")

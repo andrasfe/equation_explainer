@@ -485,15 +485,20 @@ class AppModel:
 
         if cmd == "config":
             cfg = self.config
-            problems = list(cfg.problems)
-            model = cfg.llm.model or "auto"
-            if cfg.llm.provider != "openrouter" or cfg.llm.api_key is not None:
+            # the model picked in the top bar (body "llm"), or LLM_PROVIDER's
+            choice = cfg.choice(s("llm"))
+            llm = choice.settings
+            problems = list(cfg.problems if choice.id == cfg.choices[0].id else choice.problems)
+            model = llm.model or "auto"
+            if llm.provider != "openrouter" or llm.api_key is not None:
                 try:
-                    model = LLMClient(cfg.llm).resolve_model()
+                    model = LLMClient(llm).resolve_model()
                 except Exception as e:  # noqa: BLE001
                     problems.append(str(e))
             python = cfg.python.interpreter or str(self.runner.venv_python)
-            return {"provider": cfg.llm.display_name, "model": model, "baseURL": cfg.llm.base_url,
+            return {"provider": llm.display_name, "model": model, "baseURL": llm.base_url,
+                    "llm": choice.id, "choices": [{"id": c.id, "provider": c.settings.display_name, "model": c.settings.model or "",
+                                                   "problems": c.problems} for c in cfg.choices],
                     "envFile": str(cfg.env_file) if cfg.env_file else "", "problems": problems, "python": python,
                     "packages": " ".join(cfg.python.packages),
                     "levelset": {"provider": cfg.level_set.display_name, "model": cfg.level_set.model or "auto",
@@ -506,7 +511,7 @@ class AppModel:
             messages = [{"role": m.get("role") if isinstance(m.get("role"), str) else "user",
                          "content": m.get("content") if isinstance(m.get("content"), str) else ""}
                         for m in raw if isinstance(m, dict)]
-            self.start_chat(s("id"), messages, s("purpose"))
+            self.start_chat(s("id"), messages, s("purpose"), s("llm"))
             return {"ok": True}
 
         if cmd == "allBoards":
@@ -604,17 +609,17 @@ class AppModel:
                 self.window.select(summary.id)
 
     # ---- chat streaming
-    def start_chat(self, chat_id: str, messages: list[dict], purpose: str) -> None:
+    def start_chat(self, chat_id: str, messages: list[dict], purpose: str, llm: str = "") -> None:
         cfg = self.config
-        # each purpose has its own model: explanations (and summaries), the level-set, diagrams
+        # each purpose has its own model: explanations and summaries (the one picked in the top bar), the level-set, diagrams
         if purpose == "levelset":
             settings, problems = cfg.level_set, cfg.level_set_problems
         elif purpose == "diagram":
             settings, problems = cfg.diagram, cfg.diagram_problems
         else:
-            settings = cfg.llm
+            settings = cfg.choice(llm).settings
             problems = ([f"OPENROUTER_API_KEY is missing. Add it to {cfg.env_file or '.env'} or set LLM_PROVIDER=lmstudio."]
-                        if cfg.llm.provider == "openrouter" and cfg.llm.api_key is None else [])
+                        if settings.provider == "openrouter" and settings.api_key is None else [])
         if problems:
             self.web.fail_chat(chat_id, problems[0])
             return

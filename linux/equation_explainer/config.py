@@ -62,6 +62,15 @@ class LLMSettings:
 
 
 @dataclass
+class LLMChoice:
+    """A model the board can explain with, picked from the top bar. Built from .env: LLM_PROVIDER's model comes first
+    (the default), then the models of every other provider .env configures, plus any listed in *_MODELS."""
+    id: str  # "provider|model"; an empty model means whichever model LM Studio has loaded
+    settings: LLMSettings
+    problems: list[str]
+
+
+@dataclass
 class PythonSettings:
     interpreter: Optional[str]  # explicit interpreter (PYTHON_PATH); None = managed venv
     packages: list[str]
@@ -78,6 +87,11 @@ class AppConfig:
     problems: list[str] = field(default_factory=list)
     level_set_problems: list[str] = field(default_factory=list)
     diagram_problems: list[str] = field(default_factory=list)
+    choices: list[LLMChoice] = field(default_factory=list)  # every model the board can switch to; the first is llm
+
+    def choice(self, choice_id: Optional[str]) -> LLMChoice:
+        """The choice with this id, or the default (LLM_PROVIDER's model) when it is unknown or .env no longer lists it."""
+        return next((c for c in self.choices if c.id == choice_id), self.choices[0])
 
 
 def parse_provider(raw: str) -> Optional[str]:
@@ -193,17 +207,38 @@ def resolve(values: dict[str, str], env_file: Optional[Path]) -> AppConfig:
             provider = "lmstudio"
     else:
         provider = "openrouter" if get("OPENROUTER_API_KEY") else "lmstudio"
-    base, key, model = _endpoint(provider, get)
-    if provider == "openrouter" and key is None:
-        problems.append("OPENROUTER_API_KEY is not set in .env")
-    if provider == "custom" and get("LLM_BASE_URL") is None:
-        problems.append("LLM_BASE_URL is not set for the custom provider")
+    shared: list[str] = []
+    extra_body = _json_object(get("LLM_EXTRA_BODY"), "LLM_EXTRA_BODY", shared)
     temperature = _float(get("LLM_TEMPERATURE"))
     max_tokens = _int(get("LLM_MAX_TOKENS"))
-    llm = LLMSettings(provider, _url(base, problems), key, model,
-                      0.3 if temperature is None else temperature,
-                      8192 if max_tokens is None else max_tokens,
-                      _json_object(get("LLM_EXTRA_BODY"), "LLM_EXTRA_BODY", problems))
+    # The board's model, and every other one .env names (LMSTUDIO_MODELS etc. add more per provider).
+    prefix = {"lmstudio": "LMSTUDIO", "openrouter": "OPENROUTER", "custom": "LLM"}
+    configured = {
+        "lmstudio": any(get(k) for k in ("LMSTUDIO_BASE_URL", "LMSTUDIO_MODEL", "LMSTUDIO_MODELS", "LMSTUDIO_API_KEY")),
+        "openrouter": get("OPENROUTER_API_KEY") is not None,
+        "custom": get("LLM_BASE_URL") is not None,
+    }
+    choices: list[LLMChoice] = []
+    for prov in [provider] + [x for x in ("lmstudio", "openrouter", "custom") if x != provider and configured[x]]:
+        base, key, model = _endpoint(prov, get)
+        pp: list[str] = []
+        if prov == "openrouter" and key is None:
+            pp.append("OPENROUTER_API_KEY is not set in .env")
+        if prov == "custom" and get("LLM_BASE_URL") is None:
+            pp.append("LLM_BASE_URL is not set for the custom provider")
+        url = _url(base, pp)
+        models: list[Optional[str]] = [model]
+        for m in (get(f"{prefix[prov]}_MODELS") or "").replace(",", " ").split():
+            if m not in models:
+                models.append(m)
+        for m in models:
+            s = LLMSettings(prov, url, key, m, 0.3 if temperature is None else temperature,
+                            8192 if max_tokens is None else max_tokens, extra_body)
+            choices.append(LLMChoice(f"{prov}|{m or ''}", s, pp + shared))
+        if prov == provider:
+            problems += pp
+    problems += shared
+    llm = choices[0].settings
 
     # Level-set (learner profile): OpenRouter + the sol-pro model unless overridden.
     ls_problems: list[str] = []
@@ -254,4 +289,4 @@ def resolve(values: dict[str, str], env_file: Optional[Path]) -> AppConfig:
                             120.0 if timeout is None else timeout)
 
     return AppConfig(llm=llm, level_set=level_set, diagram=diagram, python=python, env_file=env_file,
-                     problems=problems, level_set_problems=ls_problems, diagram_problems=dg_problems)
+                     problems=problems, level_set_problems=ls_problems, diagram_problems=dg_problems, choices=choices)

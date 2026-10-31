@@ -14,6 +14,7 @@
     pending: null,      // {anchor, range} captured from the current selection
     outlineOpen: false,
     config: null,
+    llm: '',            // model picked in the top bar ("provider|model"); '' = LLM_PROVIDER's
     library: new Map(), // boardId -> every saved board (the learner model looks across all of them)
     profile: null,      // learner profile from the last level-set
     notes: [],          // the student's own directions [{id, text, createdAt, updatedAt}]; private, never in git
@@ -191,7 +192,7 @@
         save(board);
         if (board === S.board) render();
       },
-    });
+    }, { llm: S.llm });
     S.streams.set(card.id, { ...h, boardId: board.id });
   }
 
@@ -1283,7 +1284,7 @@
       c.diagram ? row('diagrams', `${c.diagram.provider} · ${c.diagram.model}`) : null,
       ((c.diagram && c.diagram.problems) || []).length ? el('div', { class: 'cfg-problems' }, c.diagram.problems.map((p) => el('div', {}, '◇ ' + p))) : null,
       (c.problems || []).length ? el('div', { class: 'cfg-problems' }, c.problems.map((p) => el('div', {}, '⚠ ' + p))) : null,
-      el('p', { class: 'muted small' }, 'Edit the .env file and click refresh. Keys: LLM_PROVIDER (openrouter | lmstudio), OPENROUTER_API_KEY, OPENROUTER_MODEL, LMSTUDIO_BASE_URL, LMSTUDIO_MODEL.'),
+      el('p', { class: 'muted small' }, 'Edit the .env file and click refresh. Keys: LLM_PROVIDER (openrouter | lmstudio), OPENROUTER_API_KEY, OPENROUTER_MODEL, LMSTUDIO_BASE_URL, LMSTUDIO_MODEL. The menu at the top right switches between every model .env names; add more with OPENROUTER_MODELS or LMSTUDIO_MODELS (comma-separated).'),
       el('div', { class: 'modal-actions' },
         B.isNative ? el('button', { class: 'chalk-btn', onclick: () => B.call('openEnv').catch((e) => toast(e.message, 'error')) }, 'open .env') : null,
         el('button', { class: 'chalk-btn', onclick: async () => { close(); await showConfig(); } }, 'refresh'),
@@ -1294,7 +1295,7 @@
     const lsProblems = (c) => (c && c.levelset && c.levelset.problems) || [];
     const before = lsProblems(S.config);
     try {
-      S.config = await B.call('config');
+      S.config = await B.call('config', { llm: S.llm });
     } catch (e) {
       S.config = { problems: [e.message] };
     }
@@ -1303,8 +1304,32 @@
     if (S.ls.error && before.includes(S.ls.error) && !lsProblems(c).includes(S.ls.error)) S.ls.error = null;
     const bad = (c.problems || []).length > 0;
     dom.status.classList.toggle('bad', bad);
-    dom.statusText.textContent = c.provider ? `${c.provider} · ${truncate(c.model || 'auto', 28)}` : 'no model';
     dom.status.title = bad ? c.problems.join('\n') : `${c.provider} · ${c.model}\n${c.baseURL}`;
+    renderModelMenu(c);
+  }
+
+  /** The top-right menu: every model .env names; the picked one answers new questions and summaries. */
+  function renderModelMenu(c) {
+    const short = (m) => truncate(m.replace(/^[^/]+\//, ''), 30); // drop the "org/" prefix
+    const label = (ch) => `${ch.provider} · ${ch.model ? short(ch.model) : 'loaded model'}`;
+    const choices = c.choices || [];
+    const opts = choices.length
+      ? choices.map((ch) => el('option', { value: ch.id, title: `${ch.provider} · ${ch.model || 'whichever model is loaded'}` }, label(ch)))
+      : [el('option', { value: '' }, c.provider ? `${c.provider} · ${truncate(c.model || 'auto', 28)}` : 'no model')];
+    dom.modelSelect.replaceChildren(...opts);
+    dom.modelSelect.value = c.llm || '';
+    // LM Studio's loaded model, resolved for this request, shows in the label when .env leaves it blank
+    const cur = choices.find((ch) => ch.id === c.llm);
+    if (cur && !cur.model && c.model && c.model !== 'auto') dom.modelSelect.selectedOptions[0].textContent = `${cur.provider} · ${short(c.model)}`;
+  }
+
+  async function pickModel(id) {
+    S.llm = id;
+    try { localStorage.setItem('ee.llm', id); } catch (e) { /* storage may be unavailable */ }
+    await refreshConfig();
+    const c = S.config || {};
+    toast(`New questions go to ${c.provider} · ${c.model}.`);
+    if (S.summaryOpen) renderSummary(true);
   }
 
   let toastTimer = null;
@@ -1584,7 +1609,7 @@
         job.error = err.message;
         if (board === S.board) renderSummary(true);
       },
-    }, { purpose: 'summary' });
+    }, { purpose: 'summary', llm: S.llm });
     job.cancel = h.cancel;
   }
 
@@ -1851,7 +1876,7 @@
       crumbs: $('crumbs'), backBtn: $('btn-back'), mapBtn: $('btn-map'), fontBtn: $('btn-font'),
       outline: $('outline'), outlineTree: $('outline-tree'), popover: $('popover'), popQuote: $('pop-quote'),
       popInput: $('pop-input'), popChips: $('pop-chips'), modal: $('modal'), toast: $('toast'),
-      status: $('status'), statusText: $('status-text'), levelBtn: $('btn-level'), levelsetBtn: $('btn-levelset'),
+      status: $('status'), modelSelect: $('model-select'), configBtn: $('btn-config'), levelBtn: $('btn-level'), levelsetBtn: $('btn-levelset'),
       learner: $('learner'), learnerProfile: $('learner-profile'), noteList: $('note-list'), noteInput: $('note-input'),
       noteSave: $('note-save'), noteCancel: $('note-cancel'), learnerPrompt: $('learner-prompt-text'), learnerBase: $('learner-base-text'),
       summary: $('summary'), summaryContent: $('summary-content'), summaryBtn: $('btn-summary'),
@@ -1869,7 +1894,8 @@
     dom.fontBtn.addEventListener('click', cycleFont);
     $('btn-zoom-in').addEventListener('click', () => zoom('in'));
     $('btn-zoom-out').addEventListener('click', () => zoom('out'));
-    dom.status.addEventListener('click', showConfig);
+    dom.configBtn.addEventListener('click', showConfig);
+    dom.modelSelect.addEventListener('change', () => pickModel(dom.modelSelect.value));
     dom.levelBtn.addEventListener('click', () => toggleLearner());
     $('learner-close').addEventListener('click', () => toggleLearner(false));
     dom.summaryBtn.addEventListener('click', () => toggleSummary());
@@ -1925,6 +1951,7 @@
     let font = DEFAULT_FONT;
     try { font = localStorage.getItem('ee.font') || font; } catch (e) { /* ignore */ }
     if (!FONTS.includes(font)) font = DEFAULT_FONT; // a face from another platform
+    try { S.llm = localStorage.getItem('ee.llm') || ''; } catch (e) { /* ignore */ }
     setFont(font);
     if (document.fonts) document.fonts.ready.then(scheduleOverlay);
   }

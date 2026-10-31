@@ -56,15 +56,17 @@ EE.bridge = (() => {
   };
 
   /** Start a streamed chat completion. Returns {id, cancel()}.
-   *  opts.purpose: 'explain' (the board's model) or 'levelset' (the learner-profile model). */
+   *  opts.purpose: 'explain' (the board's model) or 'levelset' (the learner-profile model).
+   *  opts.llm: id of the model picked in the top bar (explanations and summaries); empty = LLM_PROVIDER's. */
   function chat(messages, handlers, opts = {}) {
     const id = EE.util.uid('chat');
     const purpose = opts.purpose || 'explain';
+    const llm = opts.llm || '';
     chats.set(id, handlers);
     if (isNative) {
-      call('chat', { id, messages, purpose }).catch((e) => EE.native.error({ id, message: e.message }));
+      call('chat', { id, messages, purpose, llm }).catch((e) => EE.native.error({ id, message: e.message }));
     } else {
-      devChat(id, messages, purpose);
+      devChat(id, messages, purpose, llm);
     }
     return {
       id,
@@ -79,7 +81,7 @@ EE.bridge = (() => {
     };
   }
 
-  async function devChat(id, messages, purpose) {
+  async function devChat(id, messages, purpose, llm) {
     const h = chats.get(id);
     const ctrl = new AbortController();
     h.ctrl = ctrl;
@@ -87,7 +89,7 @@ EE.bridge = (() => {
       const res = await fetch('/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ messages, purpose }),
+        body: JSON.stringify({ messages, purpose, llm }),
         signal: ctrl.signal,
       });
       if (!res.ok) throw new Error(await res.text());

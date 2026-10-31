@@ -109,6 +109,23 @@ def test_diagram_model_defaults_to_openrouter_qwen_coder():
     assert local.diagram_problems == []
 
 
+def test_model_choices_list_every_configured_model():
+    c = config.resolve({"LLM_PROVIDER": "lmstudio", "LMSTUDIO_MODEL": "gemma", "OPENROUTER_API_KEY": "k",
+                        "OPENROUTER_MODEL": "openai/gpt", "OPENROUTER_MODELS": "a/b, openai/gpt c/d"}, None)
+    assert [x.id for x in c.choices] == ["lmstudio|gemma", "openrouter|openai/gpt", "openrouter|a/b", "openrouter|c/d"]
+    assert c.choices[0].settings == c.llm  # LLM_PROVIDER's model is the default
+    pick = c.choice("openrouter|a/b").settings
+    assert (pick.model, pick.api_key, pick.max_tokens) == ("a/b", "k", 8192)
+    assert c.choice("gone|x").id == "lmstudio|gemma"  # unknown pick falls back to the default
+
+    # no OpenRouter key: only LM Studio, whose blank model means the loaded one
+    assert [x.id for x in config.resolve({"LLM_PROVIDER": "lmstudio"}, None).choices] == ["lmstudio|"]
+    # OpenRouter default; LM Studio is offered once .env mentions it
+    both = config.resolve({"OPENROUTER_API_KEY": "k", "LMSTUDIO_BASE_URL": "http://box:1234/v1"}, None)
+    assert [x.id for x in both.choices] == ["openrouter|anthropic/claude-fable-5.1", "lmstudio|"]
+    assert both.choice("lmstudio|").settings.base_url == "http://box:1234/v1"
+
+
 def test_trailing_slash_and_bad_extra_body():
     c = config.resolve({"LMSTUDIO_BASE_URL": "http://box:1234/v1/", "LLM_EXTRA_BODY": "nope"}, None)
     assert c.llm.base_url == "http://box:1234/v1"

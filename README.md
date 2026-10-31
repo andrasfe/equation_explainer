@@ -101,11 +101,19 @@ reboots. `make linux-setup` runs just the checks; `EE_SKIP_SETUP=1 make run` ski
 `.env` is re-read on every request, so edits apply immediately. **Board ▸ Open .env** (the ☰ menu on Linux)
 opens it.
 
+**Switching models.** The menu at the top right lists every model `.env` names: `LLM_PROVIDER`'s model first
+(the default), then those of any other provider `.env` configures (OpenRouter once `OPENROUTER_API_KEY` is set,
+LM Studio once any `LMSTUDIO_*` key is, a custom server once `LLM_BASE_URL` is). The pick applies to the next question and summary, so if LM Studio is
+busy you can send the next one to OpenRouter without waiting. It is remembered across launches. Add more models
+with `OPENROUTER_MODELS` / `LMSTUDIO_MODELS` / `LLM_MODELS` (comma-separated). ⓘ beside it opens *Model & runtime*. The level-set
+and diagrams keep their own models.
+
 | key | meaning |
 | --- | --- |
 | `LLM_PROVIDER` | `lmstudio` or `openrouter` (inferred from `OPENROUTER_API_KEY` if unset) |
 | `LMSTUDIO_BASE_URL` / `LMSTUDIO_MODEL` | default `http://localhost:1234/v1`; a blank model means whatever LM Studio has loaded |
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | default model `anthropic/claude-fable-5.1` |
+| `OPENROUTER_MODELS`, `LMSTUDIO_MODELS`, `LLM_MODELS` | extra models for the top-right menu, comma-separated |
 | `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_EXTRA_BODY` | generation settings (`LLM_EXTRA_BODY` is JSON merged into the request) |
 | `LEVELSET_MODEL` | model for the level-set, default `openai/gpt-5.6-sol-pro` on OpenRouter (needs `OPENROUTER_API_KEY`) |
 | `LEVELSET_PROVIDER`, `LEVELSET_MAX_TOKENS`, `LEVELSET_EXTRA_BODY` | where the level-set runs (`openrouter` by default, or `lmstudio`) and its request settings |

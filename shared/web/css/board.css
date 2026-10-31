@@ -119,6 +119,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .top-btn.status { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); }
 .status.bad .dot { background: var(--pink); box-shadow: 0 0 6px var(--pink); }
+#model-select {
+  appearance: none; -webkit-appearance: none; background: transparent; border: none; outline: none;
+  color: inherit; font: inherit; padding: 0; max-width: 300px; text-overflow: ellipsis; cursor: pointer;
+}
+.status .caret { margin-left: -4px; font-size: 10px; pointer-events: none; }
+.status-info { background: none; border: none; color: inherit; padding: 0 0 0 2px; font-size: 13px; cursor: pointer; }
+.status-info:hover { color: var(--chalk); }
 #crumbs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
 .crumb {
   background: none; border: none; color: var(--chalk-dim); padding: 2px 6px; border-radius: 6px;

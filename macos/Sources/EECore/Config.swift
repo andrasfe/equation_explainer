@@ -45,6 +45,15 @@ public struct LLMSettings: Sendable, Equatable {
     }
 }
 
+/// A model the board can explain with, picked from the top bar. Built from .env: LLM_PROVIDER's model comes first
+/// (the default), then the models of every other provider .env configures, plus any listed in *_MODELS.
+public struct LLMChoice: Sendable, Equatable {
+    /// "provider|model"; an empty model means whichever model LM Studio has loaded
+    public var id: String
+    public var settings: LLMSettings
+    public var problems: [String]
+}
+
 public struct PythonSettings: Sendable, Equatable {
     /// explicit interpreter (PYTHON_PATH); nil = managed venv
     public var interpreter: String?
@@ -54,6 +63,8 @@ public struct PythonSettings: Sendable, Equatable {
 
 public struct AppConfig: Sendable {
     public var llm: LLMSettings
+    /// Every model the board can switch to; the first is `llm`.
+    public var choices: [LLMChoice]
     /// The model that builds the learner profile ("level-set"); OpenRouter by default.
     public var levelSet: LLMSettings
     /// The model that turns a diagram request into a diagram spec; OpenRouter by default.
@@ -67,6 +78,13 @@ public struct AppConfig: Sendable {
     public static let defaultOpenRouterModel = "anthropic/claude-fable-5.1"
     public static let defaultLevelSetModel = "openai/gpt-5.6-sol-pro"
     public static let defaultDiagramModel = "qwen/qwen3-coder-30b-a3b-instruct"
+
+    /// The choice with this id, or the default (LLM_PROVIDER's model) when it is unknown or .env no longer lists it.
+    public func choice(_ id: String?) -> LLMChoice {
+        choices.first { $0.id == id } ?? choices[0]
+    }
+
+    static func choiceId(_ provider: LLMSettings.Provider, _ model: String?) -> String { "\(provider.rawValue)|\(model ?? "")" }
 
     static func parseProvider(_ raw: String) -> LLMSettings.Provider? {
         switch raw.lowercased() {
@@ -146,13 +164,38 @@ public struct AppConfig: Sendable {
         } else {
             provider = get("OPENROUTER_API_KEY") != nil ? .openrouter : .lmstudio
         }
-        let ep = endpoint(provider, get)
-        if provider == .openrouter && ep.key == nil { problems.append("OPENROUTER_API_KEY is not set in .env") }
-        if provider == .custom && get("LLM_BASE_URL") == nil { problems.append("LLM_BASE_URL is not set for the custom provider") }
-        let llm = LLMSettings(provider: provider, baseURL: url(ep.base, problems: &problems), apiKey: ep.key, model: ep.model,
-                              temperature: get("LLM_TEMPERATURE").flatMap(Double.init) ?? 0.3,
-                              maxTokens: get("LLM_MAX_TOKENS").flatMap(Int.init) ?? 8192,
-                              extraBodyJSON: jsonObject(get("LLM_EXTRA_BODY"), key: "LLM_EXTRA_BODY", problems: &problems))
+        var shared: [String] = []
+        let extraBody = jsonObject(get("LLM_EXTRA_BODY"), key: "LLM_EXTRA_BODY", problems: &shared)
+        // The board's model, and every other one .env names (LMSTUDIO_MODELS etc. add more per provider).
+        let prefix: [LLMSettings.Provider: String] = [.lmstudio: "LMSTUDIO", .openrouter: "OPENROUTER", .custom: "LLM"]
+        func configured(_ p: LLMSettings.Provider) -> Bool {
+            switch p {
+            case .lmstudio: return ["LMSTUDIO_BASE_URL", "LMSTUDIO_MODEL", "LMSTUDIO_MODELS", "LMSTUDIO_API_KEY"].contains { get($0) != nil }
+            case .openrouter: return get("OPENROUTER_API_KEY") != nil
+            case .custom: return get("LLM_BASE_URL") != nil
+            }
+        }
+        var choices: [LLMChoice] = []
+        for p in [provider] + [LLMSettings.Provider.lmstudio, .openrouter, .custom].filter({ $0 != provider && configured($0) }) {
+            let ep = endpoint(p, get)
+            var pp: [String] = []
+            if p == .openrouter && ep.key == nil { pp.append("OPENROUTER_API_KEY is not set in .env") }
+            if p == .custom && get("LLM_BASE_URL") == nil { pp.append("LLM_BASE_URL is not set for the custom provider") }
+            let base = url(ep.base, problems: &pp)
+            let listed = (get("\(prefix[p]!)_MODELS") ?? "").split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
+            var models: [String?] = [ep.model]
+            for m in listed where !models.contains(m) { models.append(m) }
+            for m in models {
+                let s = LLMSettings(provider: p, baseURL: base, apiKey: ep.key, model: m,
+                                    temperature: get("LLM_TEMPERATURE").flatMap(Double.init) ?? 0.3,
+                                    maxTokens: get("LLM_MAX_TOKENS").flatMap(Int.init) ?? 8192,
+                                    extraBodyJSON: extraBody)
+                choices.append(LLMChoice(id: choiceId(p, m), settings: s, problems: pp + shared))
+            }
+            if p == provider { problems += pp }
+        }
+        problems += shared
+        let llm = choices[0].settings
 
         // Level-set (learner profile): OpenRouter + openai/gpt-5.6-sol-pro unless overridden.
         var lsProblems: [String] = []
@@ -194,7 +237,7 @@ public struct AppConfig: Sendable {
             packages: packages,
             timeout: get("PYTHON_TIMEOUT").flatMap(Double.init) ?? 120)
 
-        return AppConfig(llm: llm, levelSet: levelSet, diagram: diagram, python: python, envFile: envFile,
+        return AppConfig(llm: llm, choices: choices, levelSet: levelSet, diagram: diagram, python: python, envFile: envFile,
                          problems: problems, levelSetProblems: lsProblems, diagramProblems: dgProblems)
     }
 }

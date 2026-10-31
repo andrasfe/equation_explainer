@@ -87,8 +87,9 @@ final class ConfigTests: XCTestCase {
 
     func testModelChoicesListEveryConfiguredModel() {
         let c = AppConfig.resolve(values: ["LLM_PROVIDER": "lmstudio", "LMSTUDIO_MODEL": "gemma", "OPENROUTER_API_KEY": "k",
-                                           "OPENROUTER_MODEL": "openai/gpt", "OPENROUTER_MODELS": "a/b, openai/gpt c/d"], envFile: nil)
-        XCTAssertEqual(c.choices.map(\.id), ["lmstudio|gemma", "openrouter|openai/gpt", "openrouter|a/b", "openrouter|c/d"])
+                                           "OPENROUTER_MODEL": "openai/gpt", "OPENROUTER_MODELS": "a/b, openai/gpt c/d",
+                                           "OPENROUTER_ALT_MODEL": "z/alt", "OPENROUTER_FAST_MODEL": "a/b"], envFile: nil)
+        XCTAssertEqual(c.choices.map(\.id), ["lmstudio|gemma", "openrouter|openai/gpt", "openrouter|z/alt", "openrouter|a/b", "openrouter|c/d"])
         XCTAssertEqual(c.choices[0].settings, c.llm)                    // LLM_PROVIDER's model is the default
         XCTAssertEqual(c.choice("openrouter|a/b").settings.model, "a/b")
         XCTAssertEqual(c.choice("openrouter|a/b").settings.apiKey, "k")

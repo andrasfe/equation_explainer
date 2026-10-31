@@ -60,7 +60,10 @@ function loadEnv() {
   for (const p of [provider, ...['lmstudio', 'openrouter', 'custom'].filter((x) => x !== provider && configured[x])]) {
     const ep = endpoint(p);
     const models = [ep.model];
-    for (const m of (get(listKey[p]) || '').split(/[\s,]+/)) if (m && !models.includes(m)) models.push(m);
+    // named extras such as OPENROUTER_ALT_MODEL (any PREFIX_<name>_MODEL, by key), then the *_MODELS list
+    const pre = listKey[p].slice(0, -7);
+    const named = Object.keys(vals).filter((k) => k.startsWith(pre + '_') && k.endsWith('_MODEL') && k.length > pre.length + 7).sort().map(get);
+    for (const m of [...named, ...(get(listKey[p]) || '').split(/[\s,]+/)]) if (m && !models.includes(m)) models.push(m);
     for (const m of models) cfg.choices.push({ ...cfg, ...ep, provider: p, model: m, id: `${p}|${m || ''}`, choices: undefined,
       problems: p === 'openrouter' && !ep.apiKey ? ['OPENROUTER_API_KEY is not set'] : [] });
   }

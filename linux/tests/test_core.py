@@ -111,8 +111,10 @@ def test_diagram_model_defaults_to_openrouter_qwen_coder():
 
 def test_model_choices_list_every_configured_model():
     c = config.resolve({"LLM_PROVIDER": "lmstudio", "LMSTUDIO_MODEL": "gemma", "OPENROUTER_API_KEY": "k",
-                        "OPENROUTER_MODEL": "openai/gpt", "OPENROUTER_MODELS": "a/b, openai/gpt c/d"}, None)
-    assert [x.id for x in c.choices] == ["lmstudio|gemma", "openrouter|openai/gpt", "openrouter|a/b", "openrouter|c/d"]
+                        "OPENROUTER_MODEL": "openai/gpt", "OPENROUTER_MODELS": "a/b, openai/gpt c/d",
+                        "OPENROUTER_ALT_MODEL": "z/alt", "OPENROUTER_FAST_MODEL": "a/b"}, None)
+    assert [x.id for x in c.choices] == ["lmstudio|gemma", "openrouter|openai/gpt", "openrouter|z/alt", "openrouter|a/b",
+                                         "openrouter|c/d"]
     assert c.choices[0].settings == c.llm  # LLM_PROVIDER's model is the default
     pick = c.choice("openrouter|a/b").settings
     assert (pick.model, pick.api_key, pick.max_tokens) == ("a/b", "k", 8192)

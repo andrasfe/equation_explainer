@@ -182,9 +182,13 @@ public struct AppConfig: Sendable {
             if p == .openrouter && ep.key == nil { pp.append("OPENROUTER_API_KEY is not set in .env") }
             if p == .custom && get("LLM_BASE_URL") == nil { pp.append("LLM_BASE_URL is not set for the custom provider") }
             let base = url(ep.base, problems: &pp)
-            let listed = (get("\(prefix[p]!)_MODELS") ?? "").split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
+            // named extras such as OPENROUTER_ALT_MODEL (any PREFIX_<name>_MODEL, by key), then the *_MODELS list
+            let pre = prefix[p]!
+            let named = values.keys.filter { $0.hasPrefix(pre + "_") && $0.hasSuffix("_MODEL") && $0.count > pre.count + 7 }
+                .sorted().compactMap(get)
+            let listed = (get("\(pre)_MODELS") ?? "").split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
             var models: [String?] = [ep.model]
-            for m in listed where !models.contains(m) { models.append(m) }
+            for m in named + listed where !models.contains(m) { models.append(m) }
             for m in models {
                 let s = LLMSettings(provider: p, baseURL: base, apiKey: ep.key, model: m,
                                     temperature: get("LLM_TEMPERATURE").flatMap(Double.init) ?? 0.3,

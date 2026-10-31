@@ -227,8 +227,11 @@ def resolve(values: dict[str, str], env_file: Optional[Path]) -> AppConfig:
         if prov == "custom" and get("LLM_BASE_URL") is None:
             pp.append("LLM_BASE_URL is not set for the custom provider")
         url = _url(base, pp)
+        # named extras such as OPENROUTER_ALT_MODEL (any PREFIX_<name>_MODEL, by key), then the *_MODELS list
+        pre = prefix[prov]
+        named = [get(k) for k in sorted(values) if k.startswith(pre + "_") and k.endswith("_MODEL") and len(k) > len(pre) + 7]
         models: list[Optional[str]] = [model]
-        for m in (get(f"{prefix[prov]}_MODELS") or "").replace(",", " ").split():
+        for m in [n for n in named if n] + (get(f"{pre}_MODELS") or "").replace(",", " ").split():
             if m not in models:
                 models.append(m)
         for m in models:

@@ -22,6 +22,46 @@ public enum DotEnv {
         }
         return out
     }
+
+    /// Set (or, with nil, remove) keys in a .env file in place: other lines, comments and order are kept,
+    /// new keys go at the end. The file is created when missing.
+    public static func update(file: URL, changes: [String: String?]) throws {
+        let lines = (try? String(contentsOf: file, encoding: .utf8))?.components(separatedBy: "\n") ?? []
+        var pending = changes
+        var out: [String] = []
+        for raw in lines {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            var key: String?
+            if !line.isEmpty, !line.hasPrefix("#") {
+                let body = line.hasPrefix("export ") ? String(line.dropFirst(7)).trimmingCharacters(in: .whitespaces) : line
+                if let eq = body.firstIndex(of: "="), eq != body.startIndex {
+                    key = body[..<eq].trimmingCharacters(in: .whitespaces)
+                }
+            }
+            if let k = key, let change = pending.removeValue(forKey: k) {
+                if let value = change { out.append("\(k)=\(quote(value))") }
+                continue
+            }
+            out.append(raw)
+        }
+        if out.last == "" { out.removeLast() }  // the trailing newline split into an empty line
+        for (k, change) in pending.sorted(by: { $0.key < $1.key }) {
+            if let value = change { out.append("\(k)=\(quote(value))") }
+        }
+        let text = out.isEmpty ? "" : out.joined(separator: "\n") + "\n"
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    /// Quote a value so parse (which knows no escapes) reads it back unchanged.
+    static func quote(_ raw: String) -> String {
+        let value = raw.replacingOccurrences(of: "\n", with: " ")
+        if value.isEmpty || value.contains(" ") || value.contains("#") || value.contains("'") {
+            return "\"" + value.replacingOccurrences(of: "\"", with: "'") + "\""
+        }
+        if value.contains("\"") { return "'" + value + "'" }
+        return value
+    }
 }
 
 public struct LLMSettings: Sendable, Equatable {
@@ -86,7 +126,7 @@ public struct AppConfig: Sendable {
 
     static func choiceId(_ provider: LLMSettings.Provider, _ model: String?) -> String { "\(provider.rawValue)|\(model ?? "")" }
 
-    static func parseProvider(_ raw: String) -> LLMSettings.Provider? {
+    public static func parseProvider(_ raw: String) -> LLMSettings.Provider? {
         switch raw.lowercased() {
         case "openrouter": return .openrouter
         case "lmstudio", "lm_studio", "lm-studio", "local": return .lmstudio
@@ -136,16 +176,20 @@ public struct AppConfig: Sendable {
         return out
     }
 
-    public static func load(projectRoot: String?, environment: [String: String] = ProcessInfo.processInfo.environment) -> AppConfig {
+    /// The process environment overlaid with the first .env found, and which file that was.
+    public static func envValues(projectRoot: String?, environment: [String: String] = ProcessInfo.processInfo.environment) -> (values: [String: String], envFile: URL?) {
         var values = environment
-        var used: URL?
         for url in candidateEnvFiles(projectRoot: projectRoot, environment: environment) {
             if let text = try? String(contentsOf: url, encoding: .utf8) {
                 values.merge(DotEnv.parse(text)) { _, new in new }
-                used = url
-                break
+                return (values, url)
             }
         }
+        return (values, nil)
+    }
+
+    public static func load(projectRoot: String?, environment: [String: String] = ProcessInfo.processInfo.environment) -> AppConfig {
+        let (values, used) = envValues(projectRoot: projectRoot, environment: environment)
         return resolve(values: values, envFile: used)
     }
 

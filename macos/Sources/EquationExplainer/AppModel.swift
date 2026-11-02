@@ -106,27 +106,55 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([store.dir.appendingPathComponent("\(id).json")])
     }
 
-    func openEnv() {
+    /// The .env in use; when there is none yet, one created next to the project (or in Application Support) from the example.
+    func envTarget() -> URL {
         let cfg = config
-        if let f = cfg.envFile { NSWorkspace.shared.open(f); return }
-        // No .env yet: create one next to the project (or in Application Support) from the example.
+        if let f = cfg.envFile { return f }
         let target = projectRoot.map { URL(fileURLWithPath: $0).appendingPathComponent(".env") }
             ?? AppPaths.supportDir.appendingPathComponent(".env")
         let example = projectRoot.map { URL(fileURLWithPath: $0).appendingPathComponent(".env.example") }
         let text = example.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? "LLM_PROVIDER=lmstudio\nLMSTUDIO_BASE_URL=http://localhost:1234/v1\n"
         try? text.write(to: target, atomically: true, encoding: .utf8)
-        NSWorkspace.shared.open(target)
+        return target
     }
 
+    func openEnv() { NSWorkspace.shared.open(envTarget()) }
+
     enum ZoomDir: String { case `in`, out, reset }
-    func zoom(_ dir: ZoomDir) {
+    func zoom(_ dir: ZoomDir, level: Double? = nil) {
         let z = web.webView.pageZoom
-        switch dir {
-        case .in: web.webView.pageZoom = min(3, z + 0.1)
-        case .out: web.webView.pageZoom = max(0.5, z - 0.1)
-        case .reset: web.webView.pageZoom = 1
+        var next: Double
+        if let level { next = level } else {
+            switch dir {
+            case .in: next = z + 0.1
+            case .out: next = z - 0.1
+            case .reset: next = 1
+            }
         }
-        web.command("zoomChanged")
+        next = (min(3, max(0.5, next)) * 100).rounded() / 100
+        web.webView.pageZoom = next
+        web.call("EE.native.zoomChanged", ["zoom": next])
+    }
+
+    /// What the source picker shows: the active source and every source as .env configures it.
+    func llmSources() -> [String: Any] {
+        let (values, envFile) = AppConfig.envValues(projectRoot: projectRoot)
+        let current = AppConfig.resolve(values: values, envFile: envFile).llm
+        let get = { (k: String) -> String? in
+            let v = values[k]?.trimmingCharacters(in: .whitespaces) ?? ""
+            return v.isEmpty ? nil : v
+        }
+        let sources: [[String: Any]] = ["openrouter", "lmstudio", "custom"].map { provider in
+            var v = values
+            v["LLM_PROVIDER"] = provider
+            let llm = AppConfig.resolve(values: v, envFile: envFile).llm
+            let modelKey = ["openrouter": "OPENROUTER_MODEL", "lmstudio": "LMSTUDIO_MODEL"][provider] ?? "LLM_MODEL"
+            return ["provider": provider, "name": llm.displayName, "baseURL": llm.baseURL.absoluteString,
+                    "model": get(modelKey) ?? "", "defaultModel": llm.model ?? "",
+                    "hasKey": llm.apiKey != nil, "configured": provider != "custom" || get("LLM_BASE_URL") != nil]
+        }
+        return ["current": ["provider": current.provider.rawValue, "model": current.model ?? ""],
+                "envFile": envFile?.path ?? "", "sources": sources]
     }
 
     /// Ask the page to write every board it holds before we quit.
@@ -135,6 +163,10 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: bridge
+
+    private func bridgeError(_ message: String) -> NSError {
+        NSError(domain: "EE", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
+    }
 
     func handle(_ cmd: String, _ body: [String: Any]) async throws -> Any? {
         let str = { (k: String) in body[k] as? String ?? "" }
@@ -229,8 +261,24 @@ final class AppModel: ObservableObject {
             return ["ok": true]
 
         case "zoom":
-            zoom(ZoomDir(rawValue: str("dir")) ?? .reset)
+            zoom(ZoomDir(rawValue: str("dir")) ?? .reset, level: body["level"] as? Double)
             return ["zoom": web.webView.pageZoom]
+
+        case "llmSources":  // the picker under the status button: every source .env knows about
+            return llmSources()
+
+        case "listModels":
+            guard let provider = AppConfig.parseProvider(str("provider")) else { throw bridgeError("Unknown provider") }
+            var values = AppConfig.envValues(projectRoot: projectRoot).values
+            values["LLM_PROVIDER"] = provider.rawValue
+            return ["models": try await LLMClient(settings: AppConfig.resolve(values: values, envFile: nil).llm).listModels()]
+
+        case "setLLM":  // switch source/model for explanations: written to .env, which is re-read per request
+            guard let provider = AppConfig.parseProvider(str("provider")) else { throw bridgeError("Unknown provider") }
+            let key = ["openrouter": "OPENROUTER_MODEL", "lmstudio": "LMSTUDIO_MODEL"][provider.rawValue] ?? "LLM_MODEL"
+            let model = str("model").trimmingCharacters(in: .whitespaces)
+            try DotEnv.update(file: envTarget(), changes: ["LLM_PROVIDER": provider.rawValue, key: model.isEmpty ? nil : model])
+            return llmSources()
 
         case "copy":
             NSPasteboard.general.clearContents()
@@ -249,7 +297,7 @@ final class AppModel: ObservableObject {
             return try await handleSelfTest(body)
 
         default:
-            throw NSError(domain: "EE", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unknown command \(cmd)"])
+            throw bridgeError("Unknown command \(cmd)")
         }
     }
 

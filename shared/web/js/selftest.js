@@ -98,6 +98,36 @@ EE.selfTest = async function selfTest(opts = {}) {
     return { provider: c.provider, model: c.model, envFile: c.envFile, problems: c.problems, levelset: c.levelset };
   });
 
+  await step('source picker: sources match .env, models list, text size follows the slider', async () => {
+    if (!B.isNative) return { skipped: 'harness' };
+    const src = await B.call('llmSources');
+    assert(src.current && (src.sources || []).length === 3, 'sources: ' + JSON.stringify(src));
+    const names = { openrouter: 'OpenRouter', lmstudio: 'LM Studio', custom: 'Custom' };
+    const dflt = (S.config.choices || [])[0] || S.config;
+    assert(names[src.current.provider] === dflt.provider, `picker says ${src.current.provider}, config says ${dflt.provider}`);
+    const { models } = await B.call('listModels', { provider: src.current.provider });
+    assert(Array.isArray(models) && models.length > 0, 'no models listed');
+    if (dflt.model) assert(models.includes(dflt.model), `${dflt.model} not in the ${models.length} listed models`);
+    const z = (await B.call('zoom', { level: 1.25 })).zoom;
+    assert(Math.abs(z - 1.25) < 0.01, 'zoom level: ' + z);
+    await sleep(300);
+    await snap('01b-text-size-125');
+    assert((await B.call('zoom', { dir: 'reset' })).zoom === 1, 'zoom reset');
+    const esc = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    EE.native.command({ name: 'font' });
+    await sleep(300);
+    assert(document.querySelector('#dropdown .pop-slider'), 'the Aa panel did not open');
+    await snap('01c-font-panel');
+    esc();
+    EE.native.command({ name: 'source' });
+    await waitFor(() => document.querySelectorAll('#dropdown .pop-src').length === 3, 10000, 'the source panel');
+    await waitFor(() => /listed|reachable/.test(document.querySelector('#dropdown .pop-src.on .hint').textContent), 30000, 'the model list');
+    await snap('01d-source-panel');
+    esc();
+    assert(document.getElementById('dropdown').hidden, 'Escape did not close the panel');
+    return { provider: src.current.provider, models: models.length };
+  });
+
   await step('matrix helper inserts LaTeX', async () => {
     app.newBoard();
     app.openMatrix('root');

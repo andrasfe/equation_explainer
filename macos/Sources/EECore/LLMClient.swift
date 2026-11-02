@@ -119,6 +119,33 @@ public final class LLMClient: @unchecked Sendable {
         return id
     }
 
+    /// The chat models the server offers (LM Studio: the loaded ones first), for the model picker.
+    public func listModels(limit: Int = 600) async throws -> [String] {
+        var loaded: [String] = []
+        var root = settings.baseURL.absoluteString
+        if root.hasSuffix("/v1") { root.removeLast(3) }
+        if let url = URL(string: root + "/api/v0/models") {
+            var req = URLRequest(url: url, timeoutInterval: 5)
+            authorize(&req)
+            if let (data, resp) = try? await session.data(for: req), (resp as? HTTPURLResponse)?.statusCode == 200,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let list = obj["data"] as? [[String: Any]] {
+                loaded = list.filter { ["llm", "vlm"].contains($0["type"] as? String ?? "") && ($0["state"] as? String) == "loaded" }
+                    .compactMap { $0["id"] as? String }
+            }
+        }
+        var req = URLRequest(url: settings.baseURL.appendingPathComponent("models"), timeoutInterval: 15)
+        authorize(&req)
+        let (data, resp) = try await session.data(for: req)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
+            throw LLMError.noModel("Could not list models at \(settings.baseURL.absoluteString): \(SSE.errorMessage(from: data))")
+        }
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let ids = Set((obj?["data"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
+        let rest = ids.filter { !loaded.contains($0) && !$0.lowercased().contains("embed") }.sorted()
+        return Array((loaded + rest).prefix(limit))
+    }
+
     public func makeRequest(model: String, messages: [[String: String]]) throws -> URLRequest {
         var body: [String: Any] = ["model": model, "messages": messages, "stream": true]
         if let t = settings.temperature { body["temperature"] = t }

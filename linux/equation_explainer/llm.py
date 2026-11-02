@@ -181,6 +181,31 @@ class LLMClient:
                 return mid
         raise LLMError(f"No chat model available at {self.settings.base_url}. Load one in LM Studio or set LMSTUDIO_MODEL.")
 
+    def list_models(self, limit: int = 600) -> list[str]:
+        """The chat models the server offers (LM Studio: the loaded ones first), for the model picker."""
+        loaded: list[str] = []
+        root = self.settings.base_url[:-3] if self.settings.base_url.endswith("/v1") else self.settings.base_url
+        try:
+            status, data = self._get_json(root + "/api/v0/models", 5)
+            if status == 200:
+                for m in json.loads(data).get("data", []):
+                    if m.get("type") in ("llm", "vlm") and m.get("state") == "loaded" and isinstance(m.get("id"), str):
+                        loaded.append(m["id"])
+        except Exception:  # noqa: BLE001 - not an LM Studio server
+            pass
+        try:
+            status, data = self._get_json(self.settings.base_url + "/models", 15)
+        except urllib.error.HTTPError as e:
+            raise LLMError(f"Could not list models at {self.settings.base_url}: {error_message(e.read())}") from e
+        except (urllib.error.URLError, OSError) as e:
+            raise LLMError.unreachable(self.settings.base_url, self.settings.provider, _reason(e)) from e
+        try:
+            ids = [m.get("id") for m in json.loads(data).get("data", []) if isinstance(m.get("id"), str)]
+        except (ValueError, AttributeError):
+            ids = []
+        rest = sorted(i for i in set(ids) if i not in loaded and "embed" not in i.lower())
+        return (loaded + rest)[:limit]
+
     def make_request(self, model: str, messages: list[dict]) -> tuple[str, dict[str, str], bytes]:
         body: dict = {"model": model, "messages": messages, "stream": True}
         if self.settings.temperature is not None:

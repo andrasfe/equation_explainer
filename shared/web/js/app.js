@@ -1316,11 +1316,20 @@
     const opts = choices.length
       ? choices.map((ch) => el('option', { value: ch.id, title: `${ch.provider} · ${ch.model || 'whichever model is loaded'}` }, label(ch)))
       : [el('option', { value: '' }, c.provider ? `${c.provider} · ${truncate(c.model || 'auto', 28)}` : 'no model')];
+    if (B.isNative) opts.push(el('option', { value: MORE_MODELS }, 'more models…'));
     dom.modelSelect.replaceChildren(...opts);
     dom.modelSelect.value = c.llm || '';
     // LM Studio's loaded model, resolved for this request, shows in the label when .env leaves it blank
     const cur = choices.find((ch) => ch.id === c.llm);
     if (cur && !cur.model && c.model && c.model !== 'auto') dom.modelSelect.selectedOptions[0].textContent = `${cur.provider} · ${short(c.model)}`;
+  }
+
+  const MORE_MODELS = '__more__';
+  function onModelMenu() {
+    const id = dom.modelSelect.value;
+    if (id !== MORE_MODELS) { pickModel(id); return; }
+    dom.modelSelect.value = S.llm || '';
+    openSourcePanel();
   }
 
   async function pickModel(id) {
@@ -1341,27 +1350,164 @@
     toastTimer = setTimeout(() => { dom.toast.hidden = true; }, kind === 'error' ? 6000 : 3500);
   }
 
-  // ------------------------------------------------------------ fonts & zoom
+  // ------------------------------------------------------------ fonts & text size (the Aa panel)
+  const ZOOM = { min: 0.6, max: 2, step: 0.05 };
   function setFont(name) {
     document.documentElement.style.setProperty('--font-hand', `"${name}", "Chalkboard SE", "Patrick Hand", cursive`);
     try { localStorage.setItem('ee.font', name); } catch (e) { /* storage may be unavailable */ }
     dom.fontBtn.title = 'Chalk font: ' + name;
     scheduleOverlay();
   }
-  function cycleFont() {
+  function currentFont() {
     let cur = DEFAULT_FONT;
     try { cur = localStorage.getItem('ee.font') || cur; } catch (e) { /* ignore */ }
-    setFont(FONTS[(FONTS.indexOf(cur) + 1) % FONTS.length]);
-    toast('Chalk font: ' + getComputedStyle(document.documentElement).getPropertyValue('--font-hand').split(',')[0].replace(/"/g, ''));
+    return FONTS.includes(cur) ? cur : DEFAULT_FONT;
   }
-  async function zoom(dir) {
+  function rememberZoom(z) { try { localStorage.setItem('ee.zoom', String(z)); } catch (e) { /* ignore */ } }
+  function savedZoom() {
+    try { const z = Number(localStorage.getItem('ee.zoom')); return z >= ZOOM.min && z <= ZOOM.max ? z : 1; } catch (e) { return 1; }
+  }
+  /** zoom('in' | 'out' | 'reset') or zoom(null, level): the native page zoom, or body zoom in the harness. */
+  async function zoom(dir, level) {
+    let z;
     if (B.isNative) {
-      await B.call('zoom', { dir }).catch(() => {});
+      const r = await B.call('zoom', level != null ? { level } : { dir }).catch(() => null);
+      z = r && typeof r.zoom === 'number' ? r.zoom : savedZoom();
     } else {
-      const z = Number(document.body.style.zoom || 1);
-      document.body.style.zoom = dir === 'reset' ? 1 : Math.min(2.5, Math.max(0.6, z + (dir === 'in' ? 0.1 : -0.1)));
+      z = level != null ? level : dir === 'reset' ? 1 : Number(document.body.style.zoom || 1) + (dir === 'in' ? 0.1 : -0.1);
+      z = Math.round(Math.min(ZOOM.max, Math.max(ZOOM.min, z)) * 100) / 100;
+      document.body.style.zoom = z;
     }
+    rememberZoom(z);
     setTimeout(scheduleOverlay, 60);
+    return z;
+  }
+
+  // one dropdown panel at a time, under a top-bar button; clicking the button again closes it
+  let dropdownAnchor = null, dropdownClose = null;
+  function closeDropdown(anchor) {
+    const same = dropdownAnchor === anchor;
+    if (dropdownClose) dropdownClose();
+    return same;
+  }
+  function dropdown(anchor, content) {
+    const box = dom.dropdown;
+    box.replaceChildren(content);
+    box.hidden = false;
+    const r = anchor.getBoundingClientRect();
+    box.style.top = `${r.bottom + 6}px`;
+    box.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    const onDown = (e) => { if (!box.contains(e.target) && !anchor.contains(e.target)) close(); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    const close = () => {
+      if (dropdownClose !== close) return;
+      box.hidden = true; box.replaceChildren();
+      anchor.classList.remove('on');
+      dropdownAnchor = null; dropdownClose = null;
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    anchor.classList.add('on');
+    dropdownAnchor = anchor; dropdownClose = close;
+    return close;
+  }
+
+  function openFontPanel() {
+    if (closeDropdown(dom.fontBtn)) return;
+    const cur = currentFont();
+    const faces = el('div', { class: 'pop-faces' }, FONTS.map((f) => el('button', {
+      class: 'pop-face' + (f === cur ? ' on' : ''), style: `font-family: "${f}", cursive`, title: f,
+      onclick: (e) => { setFont(f); [...faces.children].forEach((b) => b.classList.toggle('on', b === e.currentTarget)); },
+    }, f)));
+    const value = el('span', { class: 'pop-value' });
+    const slider = el('input', { type: 'range', class: 'pop-slider', min: ZOOM.min, max: ZOOM.max, step: ZOOM.step, value: savedZoom(), 'aria-label': 'Text size' });
+    const show = (z) => { value.textContent = Math.round(z * 100) + '%'; };
+    show(Number(slider.value));
+    let pending = null;
+    slider.addEventListener('input', () => {
+      show(Number(slider.value));
+      clearTimeout(pending);
+      pending = setTimeout(() => zoom(null, Number(slider.value)), 40);
+    });
+    const nudge = (dir) => async () => { const z = await zoom(dir); slider.value = z; show(z); };
+    dropdown(dom.fontBtn, el('div', {},
+      el('div', { class: 'pop-title' }, 'chalk'), faces,
+      el('div', { class: 'pop-title' }, 'text size'),
+      el('div', { class: 'pop-row' },
+        el('button', { class: 'top-btn', title: kbd('Smaller (⌘−)'), onclick: nudge('out') }, '−'),
+        slider,
+        el('button', { class: 'top-btn', title: kbd('Larger (⌘=)'), onclick: nudge('in') }, '+'),
+        value),
+      el('div', { class: 'pop-actions' }, el('button', { class: 'linkish', title: kbd('⌘0'), onclick: nudge('reset') }, 'actual size'))));
+  }
+
+  // the model source for explanations: pick a source and model, saved to .env (level-set and diagrams keep theirs)
+  async function openSourcePanel() {
+    if (closeDropdown(dom.status)) return;
+    let data;
+    try { data = await B.call('llmSources'); } catch (e) { showConfig(); return; } // the harness has no picker
+    let chosen = (data.current || {}).provider;
+    const rows = new Map();
+    const render = () => rows.forEach((r, p) => { r.row.classList.toggle('on', p === chosen); r.radio.checked = p === chosen; r.modelRow.hidden = p !== chosen; });
+    const loadModels = async (p) => {
+      const r = rows.get(p);
+      if (!r || r.loaded) return;
+      r.loaded = true;
+      r.hint.textContent = 'listing…';
+      try {
+        const { models } = await B.call('listModels', { provider: p });
+        r.list.replaceChildren(...models.map((m) => el('option', { value: m })));
+        r.hint.textContent = models.length ? `${models.length} listed` : 'none listed';
+      } catch (e) {
+        r.hint.textContent = 'not reachable';
+        r.hint.title = e.message;
+      }
+    };
+    for (const src of data.sources || []) {
+      const radio = el('input', { type: 'radio', name: 'llm-source', value: src.provider });
+      const list = el('datalist', { id: 'models-' + src.provider });
+      const input = el('input', {
+        type: 'text', list: list.id, value: src.model || '', spellcheck: 'false', autocomplete: 'off',
+        placeholder: src.defaultModel || (src.provider === 'lmstudio' ? 'the loaded model' : 'model id'),
+      });
+      const hint = el('span', { class: 'hint' });
+      const tag = src.provider === 'openrouter' && !src.hasKey ? 'no API key in .env'
+        : src.provider === 'custom' && !src.configured ? 'LLM_BASE_URL not set' : '';
+      const modelRow = el('div', { class: 'pop-src-model', hidden: true }, input, list, hint);
+      const row = el('label', { class: 'pop-src' }, radio,
+        el('div', { class: 'pop-src-body' },
+          el('div', { class: 'pop-src-name' }, src.name, tag ? el('span', { class: 'tag' }, tag) : null),
+          el('div', { class: 'pop-src-url' }, src.baseURL),
+          modelRow));
+      radio.addEventListener('change', () => { chosen = src.provider; render(); loadModels(src.provider); });
+      rows.set(src.provider, { row, radio, modelRow, input, list, hint, loaded: false });
+    }
+    let close;
+    const apply = async () => {
+      const r = rows.get(chosen);
+      try {
+        await B.call('setLLM', { provider: chosen, model: r ? r.input.value.trim() : '' });
+        close();
+        await pickModel('');  // the menu's default is now what .env says
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    };
+    rows.forEach((r) => r.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); }));
+    close = dropdown(dom.status, el('div', {},
+      el('div', { class: 'pop-title' }, 'model source for explanations and summaries'),
+      [...rows.values()].map((r) => r.row),
+      el('div', { class: 'pop-actions' },
+        el('button', { class: 'linkish', onclick: () => { close(); showConfig(); } }, 'details'),
+        B.isNative ? el('button', { class: 'linkish', onclick: () => B.call('openEnv').catch((e) => toast(e.message, 'error')) }, 'open .env') : null,
+        el('span', { class: 'spacer' }),
+        el('button', { class: 'chalk-btn primary', onclick: apply }, 'use')),
+      el('p', { class: 'pop-note' }, `Saved to ${data.envFile || '.env'} as the default; API keys and endpoints are edited there. ` +
+        'The menu keeps every model .env names for quick switching.')));
+    render();
+    if (chosen) loadModels(chosen);
   }
 
   // ------------------------------------------------------------ learner model: level-set + profile
@@ -1876,7 +2022,7 @@
       crumbs: $('crumbs'), backBtn: $('btn-back'), mapBtn: $('btn-map'), fontBtn: $('btn-font'),
       outline: $('outline'), outlineTree: $('outline-tree'), popover: $('popover'), popQuote: $('pop-quote'),
       popInput: $('pop-input'), popChips: $('pop-chips'), modal: $('modal'), toast: $('toast'),
-      status: $('status'), modelSelect: $('model-select'), configBtn: $('btn-config'), levelBtn: $('btn-level'), levelsetBtn: $('btn-levelset'),
+      dropdown: $('dropdown'), status: $('status'), modelSelect: $('model-select'), configBtn: $('btn-config'), levelBtn: $('btn-level'), levelsetBtn: $('btn-levelset'),
       learner: $('learner'), learnerProfile: $('learner-profile'), noteList: $('note-list'), noteInput: $('note-input'),
       noteSave: $('note-save'), noteCancel: $('note-cancel'), learnerPrompt: $('learner-prompt-text'), learnerBase: $('learner-base-text'),
       summary: $('summary'), summaryContent: $('summary-content'), summaryBtn: $('btn-summary'),
@@ -1891,11 +2037,9 @@
     $('ledge-eraser').addEventListener('click', closeAll);
     dom.mapBtn.addEventListener('click', () => toggleOutline());
     $('outline-close').addEventListener('click', () => toggleOutline(false));
-    dom.fontBtn.addEventListener('click', cycleFont);
-    $('btn-zoom-in').addEventListener('click', () => zoom('in'));
-    $('btn-zoom-out').addEventListener('click', () => zoom('out'));
+    dom.fontBtn.addEventListener('click', openFontPanel);
     dom.configBtn.addEventListener('click', showConfig);
-    dom.modelSelect.addEventListener('change', () => pickModel(dom.modelSelect.value));
+    dom.modelSelect.addEventListener('change', onModelMenu);
     dom.levelBtn.addEventListener('click', () => toggleLearner());
     $('learner-close').addEventListener('click', () => toggleLearner(false));
     dom.summaryBtn.addEventListener('click', () => toggleSummary());
@@ -1953,6 +2097,7 @@
     if (!FONTS.includes(font)) font = DEFAULT_FONT; // a face from another platform
     try { S.llm = localStorage.getItem('ee.llm') || ''; } catch (e) { /* ignore */ }
     setFont(font);
+    if (savedZoom() !== 1) zoom(null, savedZoom());
     if (document.fonts) document.fonts.ready.then(scheduleOverlay);
   }
 
@@ -1975,9 +2120,14 @@
       const cmds = {
         closeLast, closeAll, toggleMap: () => toggleOutline(), insertMatrix: () => openMatrix(),
         focus: () => focusComposer(), zoomChanged: () => setTimeout(scheduleOverlay, 50), config: showConfig,
+        source: openSourcePanel, font: openFontPanel,
         levelset: () => levelSet({ force: true, open: true }), profile: () => toggleLearner(), summary: () => toggleSummary(),
       };
       if (cmds[name]) cmds[name]();
+    },
+    zoomChanged({ zoom: z }) {  // a native shortcut (⌘= / ⌘−) changed the page zoom
+      if (typeof z === 'number') rememberZoom(z);
+      setTimeout(scheduleOverlay, 50);
     },
     renamed({ id, title }) {
       const b = S.cache.get(id);

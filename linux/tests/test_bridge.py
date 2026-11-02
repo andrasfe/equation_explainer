@@ -179,6 +179,24 @@ def test_chat_cancel_and_missing_key(model, tmp_path, monkeypatch):
     assert "Diagrams are drawn on OpenRouter" in model.web.failed["c5"]
 
 
+def test_source_picker_lists_models_and_switches_env(model, tmp_path, monkeypatch):
+    src = model.handle("llmSources", {})
+    assert src["current"]["provider"] == "custom" and [x["provider"] for x in src["sources"]] == ["openrouter", "lmstudio", "custom"]
+    assert src["sources"][0]["hasKey"] is False and src["sources"][2]["configured"] is True
+    assert src["envFile"].endswith("test.env")
+    assert model.handle("listModels", {"provider": "custom"}) == {"models": ["stub-model"]}
+
+    after = model.handle("setLLM", {"provider": "lmstudio", "model": "qwen-7b"})
+    assert after["current"] == {"provider": "lmstudio", "model": "qwen-7b"}
+    text = Path(src["envFile"]).read_text()
+    assert "LLM_PROVIDER=lmstudio\n" in text and "LMSTUDIO_MODEL=qwen-7b\n" in text and "LLM_BASE_URL=" in text
+    assert model.handle("config", {})["provider"] == "LM Studio"
+    model.handle("setLLM", {"provider": "custom", "model": ""})  # back; an empty model drops the key
+    assert "LLM_MODEL=" not in Path(src["envFile"]).read_text()
+    with pytest.raises(ValueError):
+        model.handle("setLLM", {"provider": "nope", "model": ""})
+
+
 def test_python_command_runs_a_cell(model):
     r = model.handle("python", {"id": "r1", "code": "print('$$1+1=2$$')"})
     assert r["exitCode"] == 0 and r["stdout"] == "$$1+1=2$$\n" and r["interpreter"] == sys.executable

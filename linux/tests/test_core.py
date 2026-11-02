@@ -135,6 +135,17 @@ def test_trailing_slash_and_bad_extra_body():
     assert len(c.problems) == 1
 
 
+def test_update_dotenv_edits_in_place(tmp_path):
+    from equation_explainer.config import update_dotenv
+    f = tmp_path / ".env"
+    f.write_text("# keep me\nLLM_PROVIDER=openrouter\nexport OPENROUTER_MODEL=a/b # inline\nOPENROUTER_API_KEY=sk-x\n")
+    update_dotenv(f, {"LLM_PROVIDER": "lmstudio", "OPENROUTER_MODEL": None, "LMSTUDIO_MODEL": "qwen 7b"})
+    assert f.read_text() == "# keep me\nLLM_PROVIDER=lmstudio\nOPENROUTER_API_KEY=sk-x\nLMSTUDIO_MODEL=\"qwen 7b\"\n"
+    assert config.parse_dotenv(f.read_text())["LMSTUDIO_MODEL"] == "qwen 7b"
+    update_dotenv(tmp_path / "new" / ".env", {"A": "1"})  # created when missing
+    assert (tmp_path / "new" / ".env").read_text() == "A=1\n"
+
+
 def test_env_file_lookup_order_and_data_dir(tmp_path, monkeypatch):
     env = {"EE_ENV_FILE": str(tmp_path / "custom.env"), "EE_DATA_DIR": str(tmp_path / "data")}
     files = config.candidate_env_files(str(tmp_path / "proj"), env)

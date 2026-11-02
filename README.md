@@ -66,7 +66,8 @@ is saved with all of its branches, and the circled spots stay marked so you can 
 - **Zoom.** Use ⌘= and ⌘−, or pinch. Click ⤢ on any displayed equation for a magnifying lens.
 - **Chalk look.** Slate texture, a wooden frame and handwritten fonts: on macOS the system faces (Chalkboard SE,
   Chalkduster, Bradley Hand, Noteworthy, Marker Felt), elsewhere OFL faces bundled in `shared/web/fonts` (Patrick
-  Hand, Architects Daughter, Gloria Hallelujah, Shadows Into Light, Gochi Hand, Fredericka the Great). Switch with **Aa**.
+  Hand, Architects Daughter, Gloria Hallelujah, Shadows Into Light, Gochi Hand, Fredericka the Great). **Aa** at the top
+  right picks the face and has a slider for the text size (also ⌘= / ⌘− / ⌘0, Ctrl on Linux).
 
 ## Setup
 
@@ -107,7 +108,9 @@ LM Studio once any `LMSTUDIO_*` key is, a custom server once `LLM_BASE_URL` is).
 busy you can send the next one to OpenRouter without waiting. It is remembered across launches. Add more models
 with a named key such as `OPENROUTER_ALT_MODEL` (any `OPENROUTER_<name>_MODEL`, `LMSTUDIO_<name>_MODEL` or
 `LLM_<name>_MODEL`) or with `OPENROUTER_MODELS` / `LMSTUDIO_MODELS` / `LLM_MODELS` (comma-separated). ⓘ beside it opens *Model & runtime*. The level-set
-and diagrams keep their own models.
+and diagrams keep their own models. **more models…** at the end of the menu opens the source panel: pick OpenRouter,
+LM Studio or a custom endpoint and any model the server lists, and **use** writes `LLM_PROVIDER` and the model key
+to `.env` as the new default (API keys and endpoints are still edited in the file).
 
 | key | meaning |
 | --- | --- |

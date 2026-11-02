@@ -175,18 +175,69 @@ def candidate_env_files(project_root: Optional[str], environ: Optional[dict] = N
     return out
 
 
-def load(project_root: Optional[str], environ: Optional[dict] = None) -> AppConfig:
+def env_values(project_root: Optional[str], environ: Optional[dict] = None) -> tuple[dict[str, str], Optional[Path]]:
+    """The process environment overlaid with the first .env found, and which file that was."""
     env = dict(os.environ if environ is None else environ)
-    used: Optional[Path] = None
     for path in candidate_env_files(project_root, env):
         try:
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
         env.update(parse_dotenv(text))
-        used = path
-        break
-    return resolve(env, used)
+        return env, path
+    return env, None
+
+
+def load(project_root: Optional[str], environ: Optional[dict] = None) -> AppConfig:
+    values, used = env_values(project_root, environ)
+    return resolve(values, used)
+
+
+def update_dotenv(path: Path, changes: dict[str, Optional[str]]) -> None:
+    """Set (or, with None, remove) keys in a .env file in place: other lines, comments and order are kept,
+    new keys go at the end. The file is created when missing."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    pending = dict(changes)
+    out: list[str] = []
+    for raw in lines:
+        line = raw.strip()
+        key = None
+        if line and not line.startswith("#"):
+            body = line[7:].strip() if line.startswith("export ") else line
+            eq = body.find("=")
+            if eq > 0:
+                key = body[:eq].strip()
+        if key in pending:
+            value = pending.pop(key)
+            if value is not None:
+                out.append(f"{key}={_dotenv_quote(value)}")
+            continue  # None: drop the line
+        out.append(raw)
+    for key, value in pending.items():
+        if value is not None:
+            out.append(f"{key}={_dotenv_quote(value)}")
+    text = "\n".join(out) + ("\n" if out else "")
+    tmp = path.with_name(path.name + ".tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(text, encoding="utf-8")
+    try:
+        os.chmod(tmp, path.stat().st_mode & 0o777)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
+def _dotenv_quote(value: str) -> str:
+    """Quote a value so parse_dotenv (which knows no escapes) reads it back unchanged."""
+    value = value.replace("\n", " ")
+    if value == "" or any(c in value for c in " #'"):
+        return '"' + value.replace('"', "'") + '"'
+    if '"' in value:
+        return "'" + value + "'"
+    return value
 
 
 def resolve(values: dict[str, str], env_file: Optional[Path]) -> AppConfig:

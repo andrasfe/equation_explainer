@@ -26,7 +26,7 @@ gi.require_version("JavaScriptCore", "6.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, JavaScriptCore, WebKit  # noqa: E402
 
 from . import REPO_ROOT, __version__, resources_dir  # noqa: E402
-from .config import AppConfig, LLMSettings, load as load_config, support_dir  # noqa: E402
+from .config import AppConfig, LLMSettings, env_values, load as load_config, parse_provider, resolve as resolve_config, support_dir, update_dotenv  # noqa: E402
 from .llm import LLMClient, LLMError, StreamHandle  # noqa: E402
 from .pyrunner import PythonRunner  # noqa: E402
 from .store import BoardStore, BoardSummary, write_private  # noqa: E402
@@ -389,6 +389,22 @@ class AppModel:
     def open_env(self) -> None:
         launch_file(self.env_target(), self.window)
 
+    def llm_sources(self) -> dict:
+        """What the source picker shows: the active source and every source as .env configures it."""
+        values, env_file = env_values(self.project_root)
+        current = resolve_config(values, env_file).llm
+        sources = []
+        for provider in ("openrouter", "lmstudio", "custom"):
+            llm = resolve_config({**values, "LLM_PROVIDER": provider}, env_file).llm
+            get = lambda k: (values.get(k) or "").strip() or None  # noqa: E731
+            model_key = {"openrouter": "OPENROUTER_MODEL", "lmstudio": "LMSTUDIO_MODEL"}.get(provider, "LLM_MODEL")
+            sources.append({"provider": provider, "name": llm.display_name, "baseURL": llm.base_url,
+                            "model": get(model_key) or "", "defaultModel": llm.model or "",
+                            "hasKey": llm.api_key is not None,
+                            "configured": provider != "custom" or get("LLM_BASE_URL") is not None})
+        return {"current": {"provider": current.provider, "model": current.model or ""},
+                "envFile": str(env_file) if env_file else "", "sources": sources}
+
     def reveal_boards_folder(self) -> None:
         launch_file(self.store.dir, self.window)
 
@@ -398,17 +414,20 @@ class AppModel:
         except Exception as e:  # noqa: BLE001
             log(f"reveal failed: {e}")
 
-    def zoom(self, direction: str) -> float:
+    def zoom(self, direction: str, level: Optional[float] = None) -> float:
         v = self.web.webview
         z = v.get_zoom_level()
-        if direction == "in":
-            z = min(3.0, z + 0.1)
+        if level is not None:
+            z = level
+        elif direction == "in":
+            z = z + 0.1
         elif direction == "out":
-            z = max(0.5, z - 0.1)
+            z = z - 0.1
         else:
             z = 1.0
+        z = round(min(3.0, max(0.5, z)), 2)
         v.set_zoom_level(z)
-        self.web.command("zoomChanged")
+        self.web.call("EE.native.zoomChanged", {"zoom": z})
         return z
 
     def flush_then(self, callback: Callable[[], None], timeout: float = 1.5) -> None:
@@ -572,7 +591,29 @@ class AppModel:
             return {"ok": True}
 
         if cmd == "zoom":
-            return {"zoom": self._on_main_wait(lambda: self.zoom(s("dir") or "reset"))}
+            level = body.get("level")
+            level = float(level) if isinstance(level, (int, float)) and not isinstance(level, bool) else None
+            return {"zoom": self._on_main_wait(lambda: self.zoom(s("dir") or "reset", level))}
+
+        if cmd == "llmSources":  # the picker under the status button: every source .env knows about
+            return self.llm_sources()
+
+        if cmd == "listModels":
+            provider = parse_provider(s("provider"))
+            if provider is None:
+                raise ValueError("Unknown provider")
+            values, _ = env_values(self.project_root)
+            settings = resolve_config({**values, "LLM_PROVIDER": provider}, None).llm
+            return {"models": LLMClient(settings).list_models()}
+
+        if cmd == "setLLM":  # switch source/model for explanations: written to .env, which is re-read per request
+            provider = parse_provider(s("provider"))
+            if provider is None:
+                raise ValueError("Unknown provider")
+            key = {"openrouter": "OPENROUTER_MODEL", "lmstudio": "LMSTUDIO_MODEL"}.get(provider, "LLM_MODEL")
+            model = s("model").strip()
+            update_dotenv(self.env_target(), {"LLM_PROVIDER": provider, key: model or None})
+            return self.llm_sources()
 
         if cmd == "copy":
             text = s("text")

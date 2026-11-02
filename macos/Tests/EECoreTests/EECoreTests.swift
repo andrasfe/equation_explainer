@@ -17,6 +17,20 @@ final class DotEnvTests: XCTestCase {
         XCTAssertEqual(env["EMPTY"], "")
         XCTAssertEqual(env["SINGLE"], "a b")
     }
+
+    func testUpdateEditsInPlace() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let file = dir.appendingPathComponent(".env")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try "# keep me\nLLM_PROVIDER=openrouter\nexport OPENROUTER_MODEL=a/b # inline\nOPENROUTER_API_KEY=sk-x\n".write(to: file, atomically: true, encoding: .utf8)
+        try DotEnv.update(file: file, changes: ["LLM_PROVIDER": "lmstudio", "OPENROUTER_MODEL": nil, "LMSTUDIO_MODEL": "qwen 7b"])
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8),
+                       "# keep me\nLLM_PROVIDER=lmstudio\nOPENROUTER_API_KEY=sk-x\nLMSTUDIO_MODEL=\"qwen 7b\"\n")
+        XCTAssertEqual(DotEnv.parse(try String(contentsOf: file, encoding: .utf8))["LMSTUDIO_MODEL"], "qwen 7b")
+        let fresh = dir.appendingPathComponent("new/.env")
+        try DotEnv.update(file: fresh, changes: ["A": "1"])
+        XCTAssertEqual(try String(contentsOf: fresh, encoding: .utf8), "A=1\n")
+    }
 }
 
 final class ConfigTests: XCTestCase {

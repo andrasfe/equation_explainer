@@ -57,15 +57,14 @@ You can also **read a PDF paper** on the board and highlight its passages the sa
   - The summary is saved inside the board. **↻ regenerate** writes a new one, and the old one stays
     until the new one is finished. A dot on the button means you have asked more since.
   - It is written by the board's model (`LLM_PROVIDER`).
-- **Lessons learned.** **✎ lessons** (⇧⌘K) pops up a notebook of the theory your questions have taught
-  you, across every board: concepts, principles, theorems and why they hold, grouped by topic rather than
-  by board. Derivation steps, worked numbers and code are left out.
-  - It updates only when you have asked something new. Opening it folds the newly answered questions into
-    the notebook. If nothing is new, it just shows it and no request is sent. A dot on the button means
-    there is something to fold in.
-  - A large backlog is read in batches, and the notebook is saved after each batch. **↻ rewrite from
-    scratch** starts over from every question.
-  - It is written by the board's model, and your notes apply. It is kept privately next to the Boards folder.
+- **Lessons learned.** **✎ lessons** (⇧⌘K) pops up the theory this board's answers have taught you:
+  concepts, principles, theorems and why they hold, grouped by topic rather than by question. Derivation
+  steps, worked numbers and code are left out.
+  - It only updates when you have asked something new on the board. Opening it folds the newly answered
+    questions in. If nothing is new, it just shows the lessons and no request is sent. A dot on the button
+    means there is something to fold in.
+  - The lessons are saved inside the board. **↻ rewrite from scratch** starts over from every question.
+  - They are written by the board's model, and your notes apply.
 - **Diagrams.** Wherever an answer involves a circuit or an architecture, it draws one in chalk, right
   where it helps.
   - Quantum circuits (and reversible ones) are drawn on wires, with gates, controls, ⊕ targets, swaps,
@@ -159,7 +158,7 @@ To run everything on OpenRouter (explanations, summaries, the level-set and diag
 | --- | --- | --- |
 | boards (one JSON file each) | `~/Library/Application Support/EquationExplainer/Boards` | `~/.local/share/EquationExplainer/Boards` |
 | PDF papers opened on boards | `Boards/papers` (one copy per file, named by its content) | same |
-| learner profile, your notes, lessons learned | next to the Boards folder, written owner-only (0600) | same |
+| learner profile and your notes | next to the Boards folder, written owner-only (0600) | same |
 | managed Python environment | `…/EquationExplainer/pyenv` | `…/EquationExplainer/pyenv` |
 
 `EE_DATA_DIR` moves the whole folder, `EE_BOARDS_DIR` only the boards, `EE_ENV_FILE` points at another

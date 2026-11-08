@@ -355,44 +355,43 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
     return { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], refs, questions: list.length, sides: list.filter((q) => q.side).length };
   }
 
-  // ------------------------------------------------------------------ lessons learned (across every board)
-  const LESSONS_SYSTEM = String.raw`You keep a student's "lessons learned" notebook for a blackboard tutoring app covering mathematics, physics and quantum computing. The student asks questions on boards (one study session each), including side questions about highlighted parts of an explanation; you receive those questions with the answers they got.
+  // ------------------------------------------------------------------ lessons learned (one board's session)
+  const LESSONS_SYSTEM = String.raw`You write the "lessons learned" of one study session on a blackboard tutoring app for mathematics, physics and quantum computing. A session is one board: the main question and its follow-ups, plus side questions the student asked about highlighted parts of an explanation, sometimes several levels deep. You receive the questions with the answers they got.
 
-The notebook distils the THEORY the answers taught: concepts, definitions, principles, theorems and identities, why they hold, and how the ideas connect. Leave out derivation steps, worked numbers, code and program output, anything about a specific exercise that does not generalise, and anything about the app, the boards or the student.
+The lessons distil the THEORY those answers taught: concepts, definitions, principles, theorems and identities, why they hold, and how the ideas connect. Leave out derivation steps, worked numbers, code and program output, anything about a specific exercise that does not generalise, and anything about the app or the student.
 
-Write Markdown with all mathematics in LaTeX ($...$ inline, $$...$$ display). Organise it by topic, never by board or by question, and put related topics next to each other:
+Write Markdown with all mathematics in LaTeX ($...$ inline, $$...$$ display). Organise them by topic, never by question, and put related topics next to each other:
 ### A topic name
 - **The idea's name** — one to three sentences on its essence: what it says and why it is true or why it matters. Add a key formula only where the formula is the idea.
 
-When you are given the notebook so far, return the WHOLE notebook updated with the new answers: keep every lesson already in it (reword only to merge a new insight into it or to correct it), fold each new lesson into the topic it belongs to, add a topic when none fits, and never repeat a lesson. Questions that teach nothing new change nothing. Reorder topics only if it makes the notebook read better.
+When you are given the lessons so far, return ALL the lessons updated with the new answers: keep every lesson already there (reword only to merge a new insight into it or to correct it), fold each new lesson into the topic it belongs to, add a topic when none fits, and never repeat a lesson. Questions that teach nothing new change nothing.
 
-Be concise: a high-level reference the student can review in a few minutes. No preamble, no closing remarks, no "check yourself" questions; reply with the notebook only.`;
+Be concise: a high-level reference the student can review in a few minutes. No preamble, no closing remarks, no "check yourself" questions; reply with the lessons only.`;
 
-  /** Every answered question on every board, oldest first, keyed for the notebook: [{key, board, paper, q, quote, side, answer, at}]. */
-  function lessonItems(boards) {
+  /** Every answered question on a board, oldest first: [{key, q, quote, page, side, answer, at}] (key = the question's card id). */
+  function lessonItems(board) {
     const out = [];
-    for (const b of boards) {
-      for (const t of Object.values(b.threads || {})) {
-        t.cards.forEach((c, k) => {
-          if (c.role !== 'user') return;
-          const ans = t.cards.slice(k + 1).find((x) => x.role === 'assistant');
-          const body = ans ? answerBody(ans) : '';
-          if (!body) return;
-          out.push({
-            key: `${b.id}/${c.id}`, board: EE.util.texToText(b.title || 'Untitled board'), paper: !!b.pdf,
-            q: c.text, quote: k === 0 && t.anchor ? t.anchor.quote || '' : '', side: k === 0 && !!t.parentId,
-            answer: body, at: c.createdAt || 0,
-          });
+    for (const t of Object.values(board.threads || {})) {
+      t.cards.forEach((c, k) => {
+        if (c.role !== 'user') return;
+        const ans = t.cards.slice(k + 1).find((x) => x.role === 'assistant');
+        const body = ans ? answerBody(ans) : '';
+        if (!body) return;
+        const side = k === 0 && !!t.parentId;
+        out.push({
+          key: c.id, q: c.text, side, answer: body, at: c.createdAt || 0,
+          quote: side && t.anchor ? (isPaperAnchor(t.anchor) && !pageOf(t.anchor.cardId) ? 'the whole paper' : t.anchor.quote || '') : '',
+          page: side && t.anchor ? pageOf(t.anchor.cardId) : null,
         });
-      }
+      });
     }
     return out.sort((x, y) => x.at - y.at);
   }
 
-  /** The answered questions the notebook has not read yet. */
-  function newLessonItems(boards, lessons) {
+  /** The answered questions on a board its lessons have not read yet. */
+  function newLessonItems(board, lessons) {
     const seen = new Set((lessons && lessons.seen) || []);
-    return lessonItems(boards).filter((it) => !seen.has(it.key));
+    return lessonItems(board).filter((it) => !seen.has(it.key));
   }
 
   /** The next batch of unread questions that fits one request (at least one), oldest first. */
@@ -408,27 +407,26 @@ Be concise: a high-level reference the student can review in a few minutes. No p
     return out;
   }
 
-  /** Chat messages that fold a batch of new questions and answers into the notebook so far. */
-  function lessonsMessages(previous, batch, notes, cap = 3500) {
+  /** Chat messages that fold a batch of new questions and answers into a board's lessons so far. */
+  function lessonsMessages(previous, batch, notes, paper, cap = 3500) {
     const { truncate, clean } = EE.util;
     const lines = [];
-    let board = null;
     for (const it of batch) {
-      if (it.board !== board) {
-        board = it.board;
-        lines.push('', `${it.paper ? 'PAPER' : 'BOARD'} "${board}"`);
-      }
-      const what = it.side ? `side question about "${truncate(clean(it.quote), 160)}"` : 'question';
+      const what = !it.side ? 'question'
+        : it.page ? `question about a passage of the paper (p. ${it.page}): "${truncate(clean(it.quote), 160)}"`
+        : `side question about "${truncate(clean(it.quote), 160)}"`;
       lines.push(`- ${what}: ${truncate(it.q, 600)}`, `  answer: ${condense(it.answer, cap)}`);
     }
     const own = notesLines(notes);
-    const system = LESSONS_SYSTEM + (own.length
-      ? "\n\nTHE STUDENT'S OWN DIRECTIONS on how they want things presented (oldest first; the newer note wins). Follow them where they apply to the notebook:\n" + own.join('\n')
+    const system = LESSONS_SYSTEM + (paper
+      ? `\n\nThis session was spent reading the paper "${paper.title}"; most questions are about passages the student highlighted in it. The lessons are the theory the answers explained, not a summary of the paper.`
+      : '') + (own.length
+      ? "\n\nTHE STUDENT'S OWN DIRECTIONS on how they want things presented (oldest first; the newer note wins). Follow them where they apply to the lessons:\n" + own.join('\n')
       : '');
     const prev = previous && String(previous).trim();
-    const user = (prev ? `THE NOTEBOOK SO FAR:\n\n${prev}\n\n` : 'There is no notebook yet; start it.\n\n') +
-      `NEW QUESTIONS AND ANSWERS (${batch.length}):${lines.join('\n')}\n\n` +
-      (prev ? 'Return the whole updated notebook now.' : 'Write the notebook now.');
+    const user = (prev ? `THE LESSONS SO FAR:\n\n${prev}\n\n` : 'There are no lessons yet; write them.\n\n') +
+      `NEW QUESTIONS AND ANSWERS (${batch.length}):\n${lines.join('\n')}\n\n` +
+      (prev ? 'Return all the lessons, updated, now.' : 'Write the lessons now.');
     return [{ role: 'system', content: system }, { role: 'user', content: user }];
   }
 

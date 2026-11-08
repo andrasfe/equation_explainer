@@ -27,8 +27,7 @@
     sums: new Map(),    // boardId -> summary being written {running, text, reasoning, error, refs, cancel}
     dgJobs: new Map(),  // `${cardId}:${key}` -> diagram being drawn {boardId, cancel}
     paperLook: 'chalk', // how a PDF paper is shown: 'chalk' (inverted onto the slate) or 'paper'
-    lessons: null,      // the "lessons learned" notebook {text, seen: ["boardId/cardId"], model, updatedAt}; private, never in git
-    lj: null,           // the notebook being updated {running, text, reasoning, error, done, total, batch, rewrite, cancel}
+    ljobs: new Map(),   // boardId -> lessons learned being written {running, text, reasoning, error, done, total, batch, rewrite, cancel}
   });
 
   const dom = {};
@@ -583,6 +582,7 @@
     scheduleOverlay();
     renderOutline();
     renderSummary();
+    renderLessons();
     document.body.classList.toggle('has-branches', path.length > 1);
   }
 
@@ -1945,65 +1945,65 @@
     });
   }
 
-  // ------------------------------------------------------------ lessons learned (a notebook across every board)
+  // ------------------------------------------------------------ lessons learned (the theory of this board's session)
   const EMPTY_LESSONS = { text: '', seen: [] };
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
-  /** Answered questions, on any board, that the notebook has not read yet. */
-  const freshLessons = () => M.newLessonItems(allBoards(), S.lessons);
+  /** Answered questions on this board that its lessons have not read yet. */
+  const freshLessons = (b = S.board) => (b ? M.newLessonItems(b, b.lessons) : []);
 
   /**
-   * Fold the questions answered since the last update into the notebook, one batch per request, saving after each
-   * batch. Nothing new, nothing sent. `rewrite` starts the notebook over from every question.
+   * Fold the questions answered on this board since its lessons were last written into them, one batch per
+   * request, saving the board after each batch. Nothing new, nothing sent. `rewrite` starts over from every question.
    */
-  function updateLessons({ rewrite = false } = {}) {
-    if (S.lj && S.lj.running) return;
-    let current = rewrite ? EMPTY_LESSONS : S.lessons || EMPTY_LESSONS;
-    let todo = M.newLessonItems(allBoards(), current);
+  function updateLessons(board = S.board, { rewrite = false } = {}) {
+    const busy = board && S.ljobs.get(board.id);
+    if (!board || (busy && busy.running)) return;
+    let current = rewrite ? EMPTY_LESSONS : board.lessons || EMPTY_LESSONS;
+    let todo = M.newLessonItems(board, current);
     if (!todo.length) return;
-    const job = S.lj = { running: true, text: '', reasoning: '', error: null, cancel: null, done: 0, total: todo.length, batch: 0, rewrite };
+    const job = { running: true, text: '', reasoning: '', error: null, cancel: null, done: 0, total: todo.length, batch: 0, rewrite };
+    S.ljobs.set(board.id, job);
+    const shown = () => { if (board === S.board) renderLessons(true); };
     const stop = (error) => {
       job.running = false;
       job.error = error;
-      if (!error && S.lj === job) S.lj = null;
-      renderLessons(true);
+      if (!error && S.ljobs.get(board.id) === job) S.ljobs.delete(board.id);
+      shown();
     };
     const step = () => {
       const batch = M.lessonBatch(todo);
       Object.assign(job, { text: '', reasoning: '', batch: batch.length });
-      renderLessons(true);
-      const h = B.chat(M.lessonsMessages(current.text, batch, S.notes), {
+      shown();
+      const h = B.chat(M.lessonsMessages(current.text, batch, S.notes, paperOf(board)), {
         onChunk({ content, reasoning }) {
           job.text += content;
           if (reasoning) job.reasoning += reasoning;
-          scheduleLessons();
+          if (board === S.board) scheduleLessons();
         },
-        async onDone({ model, cancelled }) {
+        onDone({ model, cancelled }) {
           if (cancelled) { stop(null); return; }
           const text = R.splitThink(job.text).body.trim();
           if (!text) {
             stop(job.reasoning || R.splitThink(job.text).think
               ? 'The model only produced scratch work (it may have hit the token limit). Try again or raise LLM_MAX_TOKENS.'
-              : 'The model returned an empty notebook.');
+              : 'The model returned nothing.');
             return;
           }
-          // an update is the whole notebook again; one far shorter than before lost lessons on the way
+          // an update is all the lessons again; far shorter than before means some were lost on the way
           if (current.text.length > 1500 && text.length < current.text.length * 0.5) {
-            stop('The model returned a much shorter notebook, so the one you had is kept. Try again, or pick a stronger model.');
+            stop('The model returned far fewer lessons than you had, so the ones you had are kept. Try again, or pick a stronger model.');
             return;
           }
           const seen = new Set(current.seen);
           for (const it of batch) seen.add(it.key);
-          const next = { version: 1, text, seen: [...seen], model: model || '', updatedAt: Date.now() };
-          try {
-            await B.call('saveLessons', { json: JSON.stringify(next, null, 1) });
-          } catch (e) { stop('Could not save the notebook: ' + e.message); return; }
-          S.lessons = current = next;
+          board.lessons = current = { text, seen: [...seen], model: model || '', updatedAt: Date.now() };
+          save(board);
           job.done += batch.length;
           todo = todo.slice(batch.length);
           if (todo.length) { step(); return; }
           stop(null);
-          if (!lessonsShown()) toast('Lessons learned updated.');
+          if (board === S.board && !lessonsShown()) toast('Lessons learned saved with the board.');
         },
         onError(err) { stop(err.message); },
       }, { purpose: 'summary', llm: S.llm });
@@ -2022,35 +2022,37 @@
   let lessonsView = null;
   const lessonsShown = () => !!lessonsView && !dom.modal.hidden && dom.modal.contains(lessonsView);
 
-  /** The notebook pops up; it is brought up to date first, but only when new questions came up since. */
+  /** This board's lessons pop up; they are brought up to date first, but only when new questions came up since. */
   function toggleLessons(force) {
     const open = typeof force === 'boolean' ? force : !lessonsShown();
     if (!open) {
       if (lessonsShown()) { dom.modal.hidden = true; dom.modal.replaceChildren(); }
       lessonsView = null;
-      updateLessonsBtn();
       return;
     }
-    if (lessonsShown()) return;
+    if (lessonsShown() || !S.board) return;
     lessonsView = el('div', { class: 'lessons' });
     const close = modal(el('div', {},
       el('div', { class: 'lessons-head' },
         el('h2', { class: 'modal-title chalk-title' }, 'lessons learned'),
-        el('button', { class: 'icon-btn', title: 'Close (Esc)', onclick: () => { close(); updateLessonsBtn(); } }, '✕')),
+        el('button', { class: 'icon-btn', title: 'Close (Esc)', onclick: () => close() }, '✕')),
       lessonsView), 'modal-lessons');
-    if (!(S.lj && S.lj.running) && freshLessons().length) updateLessons();
+    const job = S.ljobs.get(S.board.id);
+    if (!(job && job.running) && freshLessons().length) updateLessons();
     renderLessons(true);
   }
 
   function updateLessonsBtn() {
-    if (!dom.lessonsBtn) return;
+    const b = S.board;
+    if (!dom.lessonsBtn || !b) return;
     const fresh = freshLessons().length;
-    const l = S.lessons;
-    const running = !!(S.lj && S.lj.running);
+    const l = b.lessons;
+    const job = S.ljobs.get(b.id);
+    const running = !!(job && job.running);
     dom.lessonsBtn.classList.toggle('stale', !!l && fresh > 0 && !running);
     dom.lessonsBtn.replaceChildren(running ? el('span', { class: 'chalk-dots' }, 'learning') : '✎ lessons');
-    dom.lessonsBtn.title = (l ? `Lessons learned: the theory from every board (updated ${EE.util.relTime(l.updatedAt)})`
-      : 'Lessons learned: the theory from every board, in one place') +
+    dom.lessonsBtn.title = (l ? `Lessons learned on this board (updated ${EE.util.relTime(l.updatedAt)})`
+      : 'Lessons learned on this board: the theory its answers taught') +
       (fresh && l ? `\n${plural(fresh, 'new question')} to fold in` : '') + kbd(' (⇧⌘K)');
   }
 
@@ -2058,47 +2060,50 @@
   function renderLessons(force = false) {
     updateLessonsBtn();
     if (!lessonsShown()) return;
-    const l = S.lessons;
-    const job = S.lj;
+    const b = S.board;
+    const l = b.lessons;
+    const job = S.ljobs.get(b.id);
     const fresh = freshLessons();
-    const sig = JSON.stringify([l && l.updatedAt, job && [job.running, job.text.length, job.reasoning.length, job.error, job.done], fresh.length]);
+    const sig = JSON.stringify([b.id, l && l.updatedAt, job && [job.running, job.text.length, job.reasoning.length, job.error, job.done], fresh.length]);
     if (!force && sig === lessonsSig) return;
     lessonsSig = sig;
 
     const cfg = S.config || {};
     const btn = (label, onclick, cls = '') => el('button', { class: 'chalk-btn small ' + cls, onclick }, label);
     const body = (text) => { const d = el('div', { class: 'card-body lessons-body' }); d.innerHTML = R.markdown(text); return d; };
-    const boards = (seen) => new Set(seen.map((k) => k.split('/')[0])).size;
-    const out = [];
+    const out = [el('p', { class: 'lessons-board' }, EE.util.texToText(b.title) || 'Untitled board')];
     if (job && job.running) {
       const text = R.splitThink(job.text).body;
       const left = job.total - job.done;
-      const what = job.rewrite && !job.done ? `rewriting the notebook from ${plural(job.total, 'question')}`
+      const what = job.rewrite && !job.done ? `rewriting the lessons from ${plural(job.total, 'question')}`
         : `folding in ${plural(left, 'new question')}` + (left > job.batch ? ` (${job.batch} at a time)` : '');
       out.push(el('div', { class: 'sum-meta' },
         el('span', { class: 'chalk-dots' }, what),
         el('button', { class: 'link-btn', onclick: () => job.cancel && job.cancel() }, '■ stop')));
       if (text) out.push(body(text));
-      else if (l && l.text) out.push(el('p', { class: 'muted small' }, 'The notebook so far, until the update is ready:'), body(l.text));
+      else if (l && l.text) out.push(el('p', { class: 'muted small' }, 'The lessons so far, until the update is ready:'), body(l.text));
     } else {
       if (job && job.error) {
         out.push(el('div', { class: 'cfg-problems' }, el('div', {}, '⚠ ' + job.error)),
-          el('div', { class: 'modal-actions' }, btn('↻ try again', () => updateLessons({ rewrite: job.rewrite }), 'primary')));
+          el('div', { class: 'modal-actions' }, btn('↻ try again', () => updateLessons(b, { rewrite: job.rewrite }), 'primary')));
       }
       if (l && l.text) {
         out.push(el('p', { class: 'muted small sum-meta' },
-          `From ${plural(l.seen.length, 'question')} on ${plural(boards(l.seen), 'board')}, updated ${EE.util.relTime(l.updatedAt)}${l.model ? ' by ' + l.model : ''}.` +
-          (fresh.length ? ` ${plural(fresh.length, 'new question')} not in it yet.` : ' It updates itself when you have asked new questions.')));
+          `From ${plural(l.seen.length, 'question')} on this board, updated ${EE.util.relTime(l.updatedAt)}${l.model ? ' by ' + l.model : ''}.` +
+          (fresh.length ? ` ${plural(fresh.length, 'new question')} not in them yet.` : ' They update themselves when you have asked new questions here.')));
         out.push(body(l.text));
         out.push(el('div', { class: 'modal-actions' },
-          fresh.length ? btn(`fold in ${plural(fresh.length, 'new question')}`, () => updateLessons(), 'primary') : null,
+          fresh.length ? btn(`fold in ${plural(fresh.length, 'new question')}`, () => updateLessons(b), 'primary') : null,
           btn('⎘ copy', () => copyText(l.text)),
-          btn('↻ rewrite from scratch', () => updateLessons({ rewrite: true }))));
+          btn('↻ rewrite from scratch', () => updateLessons(b, { rewrite: true }))));
+      } else if (!job && fresh.length) {
+        out.push(el('p', { class: 'small' }, `The theory this board's ${plural(fresh.length, 'answer')} taught, grouped by topic.`),
+          el('div', { class: 'modal-actions' }, btn('write the lessons', () => updateLessons(b), 'primary')));
       } else if (!job) {
-        out.push(el('p', { class: 'small' }, 'Nothing learned yet. Ask a question on a board: the theory its answer teaches is collected here, grouped by topic, and the notebook grows as you ask more.'));
+        out.push(el('p', { class: 'small' }, 'Nothing learned on this board yet. Ask a question: the theory its answer teaches is collected here, grouped by topic, and it grows as you ask more.'));
       }
     }
-    out.push(el('p', { class: 'muted small' }, `Written by the board's model: ${cfg.provider || '…'} · ${cfg.model || 'auto'}. Kept privately next to your boards. Your notes in the "where you stand" panel apply here too.`));
+    out.push(el('p', { class: 'muted small' }, `Written by the board's model: ${cfg.provider || '…'} · ${cfg.model || 'auto'}. Saved with the board. Your notes in the "where you stand" panel apply here too.`));
     lessonsView.replaceChildren(...out);
   }
 
@@ -2461,8 +2466,9 @@
       try {
         const b = JSON.parse(json);
         const cached = S.cache.get(b.id);
-        // a board still being written to (an answer, its summary or a diagram) stays the same object
-        const live = cached && ([...S.streams.values(), ...S.dgJobs.values()].some((s) => s.boardId === b.id) || !!(S.sums.get(b.id) || {}).running);
+        // a board still being written to (an answer, its summary, its lessons or a diagram) stays the same object
+        const live = cached && ([...S.streams.values(), ...S.dgJobs.values()].some((s) => s.boardId === b.id) || !!(S.sums.get(b.id) || {}).running
+          || !!(S.ljobs.get(b.id) || {}).running);
         setBoard(live ? cached : b, !live);
         updateLevelChip();
       } catch (e) {
@@ -2492,6 +2498,9 @@
       const job = S.sums.get(id);
       if (job && job.cancel) job.cancel(); // never write a summary back into a deleted board
       S.sums.delete(id);
+      const lj = S.ljobs.get(id);
+      if (lj && lj.cancel) lj.cancel(); // nor its lessons
+      S.ljobs.delete(id);
       for (const d of [...S.dgJobs.values()]) if (d.boardId === id && d.cancel) d.cancel();
       S.cache.delete(id);
       S.library.delete(id);
@@ -2520,11 +2529,6 @@
       const r = await B.call('loadProfile');
       if (r && r.json) S.profile = JSON.parse(r.json);
     } catch (e) { /* no profile yet */ }
-    try {
-      const r = await B.call('loadLessons');
-      const l = r && r.json ? JSON.parse(r.json) : null;
-      if (l && typeof l.text === 'string' && Array.isArray(l.seen)) S.lessons = l;
-    } catch (e) { /* no notebook yet */ }
     try {
       const r = await B.call('loadNotes');
       const notes = r && r.json ? JSON.parse(r.json).notes : [];

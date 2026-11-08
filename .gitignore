@@ -19,7 +19,6 @@ Boards/
 papers/
 learner.json
 learner-notes.json
-lessons.json
 
 # Linux app
 .pytest_cache/

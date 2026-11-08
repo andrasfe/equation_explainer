@@ -606,6 +606,7 @@ body.learner-open #board, body.summary-open #board { margin-right: 446px; } /* t
 .modal-lessons { width: min(860px, calc(100vw - 40px)); max-width: none; max-height: calc(100vh - 50px); }
 .lessons-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .lessons-head .modal-title { margin-bottom: 4px; }
+.lessons-board { margin: 0 0 6px; color: var(--chalk-faint); font-size: 14px; }
 .lessons-body { font-size: 15.5px; line-height: 1.55; }
 .lessons-body h3 { font-size: 1.1em; color: var(--yellow); margin: 1.1em 0 0.3em; padding-bottom: 2px; border-bottom: 1px dashed var(--chalk-ghost); }
 .lessons-body h3:first-child { margin-top: 0.3em; }

@@ -299,8 +299,6 @@ def test_store_save_list_rename_delete(tmp_path):
     assert len(store.all_json()) == 1
     assert store.profile_path.name == "learner.json"
     assert store.profile_path.parent == tmp_path
-    assert store.lessons_path.name == "lessons.json"
-    assert store.lessons_path.parent == tmp_path
     store.delete("b1")
     assert store.list() == []
     store.delete("b1")  # deleting twice is fine

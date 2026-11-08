@@ -553,13 +553,6 @@ class AppModel:
             write_private(s("json").encode("utf-8"), self.store.profile_path)
             return {"ok": True}
 
-        if cmd == "loadLessons":
-            return {"json": read_text_or_empty(self.store.lessons_path)}
-
-        if cmd == "saveLessons":
-            write_private(s("json").encode("utf-8"), self.store.lessons_path)
-            return {"ok": True}
-
         if cmd == "loadNotes":
             return {"json": read_text_or_empty(self.store.notes_path)}
 

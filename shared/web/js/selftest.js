@@ -383,9 +383,9 @@ EE.selfTest = async function selfTest(opts = {}) {
     return { chars: sum.text.length, links: links.length, model: sum.model, regenerated: S.board.summary.text.length };
   });
 
-  await step('lessons learned: pops up, distils every board, is saved, updates only for new questions', async () => {
-    const lessonsDone = () => waitFor(() => !(S.lj && S.lj.running), 15 * 60 * 1000, 'the lessons notebook');
-    const boards = () => [...new Map([...S.library, [S.board.id, S.board]]).values()];
+  await step('lessons learned: pops up for this board, is saved with it, updates only for new questions', async () => {
+    const job = () => S.ljobs.get(S.board.id);
+    const lessonsDone = () => waitFor(() => !(job() || {}).running, 15 * 60 * 1000, 'the lessons');
     const before = sent.length;
     document.getElementById('btn-lessons').click();
     assert(app.lessonsShown(), 'the lessons pop-up did not open');
@@ -394,20 +394,22 @@ EE.selfTest = async function selfTest(opts = {}) {
     assert(asked, 'no lessons request was sent although nothing had been read yet');
     assert(/lessons learned/.test(asked.messages[0].content), 'the request is not the lessons prompt');
     assert(asked.messages[0].content.includes(NOTE), 'the lessons prompt lacks the private notes');
+    for (const t of [branch1, branch2]) assert(asked.messages[1].content.includes(t.cards[0].text.slice(0, 40)), 'the lessons prompt lacks a side question');
     await lessonsDone();
-    assert(!S.lj, 'the notebook failed: ' + (S.lj && S.lj.error));
-    const l = S.lessons;
-    assert(l && l.text.length > 200, 'no notebook written');
-    assert(!EE.model.newLessonItems(boards(), l).length, 'the notebook did not read every answered question');
-    assert(document.querySelector('.lessons-body h3'), 'the notebook is not grouped by topic');
+    assert(!job(), 'the lessons failed: ' + (job() && job().error));
+    const l = S.board.lessons;
+    assert(l && l.text.length > 200, 'no lessons written');
+    assert(!EE.model.newLessonItems(S.board, l).length, 'the lessons did not read every answered question on the board');
+    assert(document.querySelector('.lessons-body h3'), 'the lessons are not grouped by topic');
     await snap('09b-lessons');
-    const r = await B.call('loadLessons');
-    assert(r && r.json && JSON.parse(r.json).text === l.text, 'the notebook was not saved');
+    await sleep(1200); // let the save land
+    const r = await B.call('selftest', { event: 'reload', id: S.board.id });
+    assert(r && r.board && (JSON.parse(r.board).lessons || {}).text === l.text, 'the lessons were not saved with the board');
     app.toggleLessons(false);
     const n = sent.length;
     app.toggleLessons(true);
     await sleep(500);
-    assert(sent.length === n && !S.lj, 'reopening with no new questions asked the model again');
+    assert(sent.length === n && !job(), 'reopening with no new questions asked the model again');
     app.toggleLessons(false);
     return { chars: l.text.length, questions: l.seen.length, model: l.model };
   });

@@ -231,6 +231,13 @@ final class AppModel: ObservableObject {
             try BoardStore.writePrivate(Data(str("json").utf8), to: store.profileURL)
             return ["ok": true]
 
+        case "loadLessons":
+            return ["json": (try? String(contentsOf: store.lessonsURL, encoding: .utf8)) ?? ""]
+
+        case "saveLessons":
+            try BoardStore.writePrivate(Data(str("json").utf8), to: store.lessonsURL)
+            return ["ok": true]
+
         case "loadNotes":
             return ["json": (try? String(contentsOf: store.notesURL, encoding: .utf8)) ?? ""]
 

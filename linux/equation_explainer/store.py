@@ -102,6 +102,11 @@ class BoardStore:
         """The student's own notes: next to the Boards folder, never in the repo."""
         return self.dir.parent / "learner-notes.json"
 
+    @property
+    def lessons_path(self) -> Path:
+        """"Lessons learned": the theory distilled from every board's answers. Private, next to the Boards folder."""
+        return self.dir.parent / "lessons.json"
+
     # ---- papers (PDFs opened on boards)
     @property
     def papers_dir(self) -> Path:

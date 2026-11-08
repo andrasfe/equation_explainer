@@ -383,6 +383,35 @@ EE.selfTest = async function selfTest(opts = {}) {
     return { chars: sum.text.length, links: links.length, model: sum.model, regenerated: S.board.summary.text.length };
   });
 
+  await step('lessons learned: pops up, distils every board, is saved, updates only for new questions', async () => {
+    const lessonsDone = () => waitFor(() => !(S.lj && S.lj.running), 15 * 60 * 1000, 'the lessons notebook');
+    const boards = () => [...new Map([...S.library, [S.board.id, S.board]]).values()];
+    const before = sent.length;
+    document.getElementById('btn-lessons').click();
+    assert(app.lessonsShown(), 'the lessons pop-up did not open');
+    await sleep(300);
+    const asked = sent.slice(before).find((m) => m.purpose === 'summary');
+    assert(asked, 'no lessons request was sent although nothing had been read yet');
+    assert(/lessons learned/.test(asked.messages[0].content), 'the request is not the lessons prompt');
+    assert(asked.messages[0].content.includes(NOTE), 'the lessons prompt lacks the private notes');
+    await lessonsDone();
+    assert(!S.lj, 'the notebook failed: ' + (S.lj && S.lj.error));
+    const l = S.lessons;
+    assert(l && l.text.length > 200, 'no notebook written');
+    assert(!EE.model.newLessonItems(boards(), l).length, 'the notebook did not read every answered question');
+    assert(document.querySelector('.lessons-body h3'), 'the notebook is not grouped by topic');
+    await snap('09b-lessons');
+    const r = await B.call('loadLessons');
+    assert(r && r.json && JSON.parse(r.json).text === l.text, 'the notebook was not saved');
+    app.toggleLessons(false);
+    const n = sent.length;
+    app.toggleLessons(true);
+    await sleep(500);
+    assert(sent.length === n && !S.lj, 'reopening with no new questions asked the model again');
+    app.toggleLessons(false);
+    return { chars: l.text.length, questions: l.seen.length, model: l.model };
+  });
+
   await step('diagrams: a circuit answer gets its circuit drawn, ◇ adds one, both are saved', async () => {
     if (!app.diagramsOn()) return { skipped: ((S.config.diagram || {}).problems || ['no diagram model'])[0] };
     const dgIdle = () => waitFor(() => S.dgJobs.size === 0, 5 * 60 * 1000, 'the diagram model');

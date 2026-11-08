@@ -132,6 +132,10 @@ def test_ready_config_and_storage_commands(model):
     assert oct(model.store.profile_path.stat().st_mode & 0o777) == "0o600"
     model.handle("saveNotes", {"json": '{"version":1,"notes":[]}'})
     assert model.handle("loadNotes", {})["json"] == '{"version":1,"notes":[]}'
+    assert model.handle("loadLessons", {}) == {"json": ""}
+    model.handle("saveLessons", {"json": '{"text":"x","seen":[]}'})
+    assert model.handle("loadLessons", {})["json"] == '{"text":"x","seen":[]}'
+    assert oct(model.store.lessons_path.stat().st_mode & 0o777) == "0o600"
 
     model.handle("current", {"id": "b1", "title": "Grover"})
     pump(0.2)

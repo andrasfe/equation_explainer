@@ -355,6 +355,83 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
     return { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], refs, questions: list.length, sides: list.filter((q) => q.side).length };
   }
 
+  // ------------------------------------------------------------------ lessons learned (across every board)
+  const LESSONS_SYSTEM = String.raw`You keep a student's "lessons learned" notebook for a blackboard tutoring app covering mathematics, physics and quantum computing. The student asks questions on boards (one study session each), including side questions about highlighted parts of an explanation; you receive those questions with the answers they got.
+
+The notebook distils the THEORY the answers taught: concepts, definitions, principles, theorems and identities, why they hold, and how the ideas connect. Leave out derivation steps, worked numbers, code and program output, anything about a specific exercise that does not generalise, and anything about the app, the boards or the student.
+
+Write Markdown with all mathematics in LaTeX ($...$ inline, $$...$$ display). Organise it by topic, never by board or by question, and put related topics next to each other:
+### A topic name
+- **The idea's name** — one to three sentences on its essence: what it says and why it is true or why it matters. Add a key formula only where the formula is the idea.
+
+When you are given the notebook so far, return the WHOLE notebook updated with the new answers: keep every lesson already in it (reword only to merge a new insight into it or to correct it), fold each new lesson into the topic it belongs to, add a topic when none fits, and never repeat a lesson. Questions that teach nothing new change nothing. Reorder topics only if it makes the notebook read better.
+
+Be concise: a high-level reference the student can review in a few minutes. No preamble, no closing remarks, no "check yourself" questions; reply with the notebook only.`;
+
+  /** Every answered question on every board, oldest first, keyed for the notebook: [{key, board, paper, q, quote, side, answer, at}]. */
+  function lessonItems(boards) {
+    const out = [];
+    for (const b of boards) {
+      for (const t of Object.values(b.threads || {})) {
+        t.cards.forEach((c, k) => {
+          if (c.role !== 'user') return;
+          const ans = t.cards.slice(k + 1).find((x) => x.role === 'assistant');
+          const body = ans ? answerBody(ans) : '';
+          if (!body) return;
+          out.push({
+            key: `${b.id}/${c.id}`, board: EE.util.texToText(b.title || 'Untitled board'), paper: !!b.pdf,
+            q: c.text, quote: k === 0 && t.anchor ? t.anchor.quote || '' : '', side: k === 0 && !!t.parentId,
+            answer: body, at: c.createdAt || 0,
+          });
+        });
+      }
+    }
+    return out.sort((x, y) => x.at - y.at);
+  }
+
+  /** The answered questions the notebook has not read yet. */
+  function newLessonItems(boards, lessons) {
+    const seen = new Set((lessons && lessons.seen) || []);
+    return lessonItems(boards).filter((it) => !seen.has(it.key));
+  }
+
+  /** The next batch of unread questions that fits one request (at least one), oldest first. */
+  function lessonBatch(items, budget = 40000, cap = 3500) {
+    const out = [];
+    let used = 0;
+    for (const it of items) {
+      const size = Math.min(cap, it.answer.length) + Math.min(600, it.q.length) + 200;
+      if (out.length && used + size > budget) break;
+      out.push(it);
+      used += size;
+    }
+    return out;
+  }
+
+  /** Chat messages that fold a batch of new questions and answers into the notebook so far. */
+  function lessonsMessages(previous, batch, notes, cap = 3500) {
+    const { truncate, clean } = EE.util;
+    const lines = [];
+    let board = null;
+    for (const it of batch) {
+      if (it.board !== board) {
+        board = it.board;
+        lines.push('', `${it.paper ? 'PAPER' : 'BOARD'} "${board}"`);
+      }
+      const what = it.side ? `side question about "${truncate(clean(it.quote), 160)}"` : 'question';
+      lines.push(`- ${what}: ${truncate(it.q, 600)}`, `  answer: ${condense(it.answer, cap)}`);
+    }
+    const own = notesLines(notes);
+    const system = LESSONS_SYSTEM + (own.length
+      ? "\n\nTHE STUDENT'S OWN DIRECTIONS on how they want things presented (oldest first; the newer note wins). Follow them where they apply to the notebook:\n" + own.join('\n')
+      : '');
+    const prev = previous && String(previous).trim();
+    const user = (prev ? `THE NOTEBOOK SO FAR:\n\n${prev}\n\n` : 'There is no notebook yet; start it.\n\n') +
+      `NEW QUESTIONS AND ANSWERS (${batch.length}):${lines.join('\n')}\n\n` +
+      (prev ? 'Return the whole updated notebook now.' : 'Write the notebook now.');
+    return [{ role: 'system', content: system }, { role: 'user', content: user }];
+  }
+
   const CONTEXT_BUDGET = 48000; // characters of conversation history sent to the model
 
   function newBoard() {
@@ -516,6 +593,6 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
   return {
     newBoard, newThread, pathTo, children, descendants, branchesOn, findCard, countBranches, pageOf, isPaperAnchor, paperSection,
     buildMessages, SYSTEM, wantsCode, repairJson, recapRule, learnerSection, notesLines, evidence, evidenceHash, levelSetMessages, parseProfile,
-    SUMMARY_SYSTEM, boardQuestions, summaryMessages,
+    SUMMARY_SYSTEM, boardQuestions, summaryMessages, LESSONS_SYSTEM, lessonItems, newLessonItems, lessonBatch, lessonsMessages,
   };
 })();

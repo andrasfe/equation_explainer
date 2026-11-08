@@ -18,6 +18,7 @@ const DATA_ROOT = process.env.EE_DEV_DATA || path.join(ROOT, 'dev', 'data');
 const DATA = path.join(DATA_ROOT, 'boards');
 const PROFILE = path.join(DATA_ROOT, 'learner.json');
 const NOTES = path.join(DATA_ROOT, 'learner-notes.json');
+const LESSONS = path.join(DATA_ROOT, 'lessons.json');
 const PAPERS = path.join(DATA, 'papers'); // PDFs opened on boards, named by content like the apps do
 const PORT = Number(process.argv[2] || process.env.PORT || 5178);
 // the managed Python environment of the desktop app on this platform
@@ -158,6 +159,11 @@ async function bridge(msg) {
       return { json: fs.existsSync(PROFILE) ? fs.readFileSync(PROFILE, 'utf8') : '' };
     case 'saveProfile':
       fs.writeFileSync(PROFILE, msg.json, { mode: 0o600 });
+      return { ok: true };
+    case 'loadLessons':
+      return { json: fs.existsSync(LESSONS) ? fs.readFileSync(LESSONS, 'utf8') : '' };
+    case 'saveLessons':
+      fs.writeFileSync(LESSONS, msg.json, { mode: 0o600 });
       return { ok: true };
     case 'loadNotes':
       return { json: fs.existsSync(NOTES) ? fs.readFileSync(NOTES, 'utf8') : '' };

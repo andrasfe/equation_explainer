@@ -70,6 +70,9 @@ public final class BoardStore: @unchecked Sendable {
     /// The student's own notes (how they want things explained). Private: next to the Boards folder, never in the repo.
     public var notesURL: URL { dir.deletingLastPathComponent().appendingPathComponent("learner-notes.json") }
 
+    /// "Lessons learned": the theory distilled from every board's answers. Private, next to the Boards folder.
+    public var lessonsURL: URL { dir.deletingLastPathComponent().appendingPathComponent("lessons.json") }
+
     /// Writes a personal file atomically and makes it readable by the owner only.
     public static func writePrivate(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: .atomic)

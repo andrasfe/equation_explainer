@@ -184,6 +184,8 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(store.allJSON().count, 1)
         XCTAssertEqual(store.profileURL.lastPathComponent, "learner.json")
         XCTAssertEqual(store.profileURL.deletingLastPathComponent().path, dir.deletingLastPathComponent().path)
+        XCTAssertEqual(store.lessonsURL.lastPathComponent, "lessons.json")
+        XCTAssertEqual(store.lessonsURL.deletingLastPathComponent().path, dir.deletingLastPathComponent().path)
     }
 
     func testPapersAreStoredOnceByContentAndStayInTheirFolder() throws {

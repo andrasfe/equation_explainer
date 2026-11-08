@@ -530,8 +530,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .poll-note.unrated { font-style: italic; }
 
 /* ===================================================================== level chip + profile */
-.level-chip, #btn-summary { position: relative; }
-.level-chip.stale::after, #btn-summary.stale::after {
+.level-chip, #btn-summary, #btn-lessons { position: relative; }
+.level-chip.stale::after, #btn-summary.stale::after, #btn-lessons.stale::after {
   content: ""; position: absolute; right: 2px; top: 3px; width: 6px; height: 6px; border-radius: 50%;
   background: var(--yellow); box-shadow: 0 0 5px var(--yellow);
 }
@@ -601,6 +601,16 @@ body.learner-open #board, body.summary-open #board { margin-right: 446px; } /* t
 .sum-gone { color: var(--chalk-faint); text-decoration: line-through; }
 .sum-also { font-size: 13.5px; margin-top: 0.9em; padding-top: 6px; border-top: 1px dashed var(--chalk-ghost); }
 #summary .modal-actions { margin-top: 10px; }
+
+/* ===================================================================== lessons learned (pop-up notebook) */
+.modal-lessons { width: min(860px, calc(100vw - 40px)); max-width: none; max-height: calc(100vh - 50px); }
+.lessons-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.lessons-head .modal-title { margin-bottom: 4px; }
+.lessons-body { font-size: 15.5px; line-height: 1.55; }
+.lessons-body h3 { font-size: 1.1em; color: var(--yellow); margin: 1.1em 0 0.3em; padding-bottom: 2px; border-bottom: 1px dashed var(--chalk-ghost); }
+.lessons-body h3:first-child { margin-top: 0.3em; }
+.lessons-body li { margin: 0.4em 0; }
+.lessons-body .katex-display > .katex { font-size: 1.1em; }
 /* a question you jumped to from the summary glows for a moment */
 .card.flash { animation: card-flash 1.8s ease-out; border-radius: 12px; }
 @keyframes card-flash {

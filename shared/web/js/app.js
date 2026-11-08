@@ -605,7 +605,7 @@
       c.head.replaceChildren();
       if (i === 0 && b.pdf) {
         const n = M.countBranches(b);
-        const meta = [b.pdf.pages ? `${b.pdf.pages} pages` : '', n ? `${n} side question${n > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
+        const meta = [b.pdf.pages ? `${b.pdf.pages} page${b.pdf.pages > 1 ? 's' : ''}` : '', n ? `${n} side question${n > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
         c.head.append(
           el('span', { class: 'paper-mark', title: b.pdf.name }, '▤'),
           el('button', { class: 'col-title chalk-title', 'data-act': 'rename-board', title: `Rename board (${b.pdf.name})` }, EE.util.texToText(b.title) || b.pdf.name),

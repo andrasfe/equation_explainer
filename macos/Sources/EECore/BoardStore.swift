@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public struct BoardSummary: Identifiable, Equatable, Sendable {
@@ -95,6 +96,38 @@ public final class BoardStore: @unchecked Sendable {
         let u = try url(id)
         guard FileManager.default.fileExists(atPath: u.path) else { return }
         try FileManager.default.trashItem(at: u, resultingItemURL: nil)
+    }
+
+    // MARK: papers (PDFs opened on a board)
+
+    /// PDFs opened on boards are copied here, so a board keeps working after the original moves.
+    public var papersDir: URL { dir.appendingPathComponent("papers", isDirectory: true) }
+
+    /// "p_<hash>.pdf" names only, so a request can never leave the papers folder.
+    public static func validPaper(_ file: String) -> Bool {
+        file.count < 100 && file.hasPrefix("p_") && file.hasSuffix(".pdf")
+            && file.dropLast(4).allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
+    }
+
+    public func paperURL(_ file: String) -> URL? {
+        Self.validPaper(file) ? papersDir.appendingPathComponent(file) : nil
+    }
+
+    /// Copies a PDF into the papers folder under a name taken from its content (the same file is stored once).
+    public func importPaper(data: Data, name: String) throws -> [String: Any] {
+        guard String(decoding: data.prefix(1024), as: UTF8.self).contains("%PDF-") else {
+            throw NSError(domain: "EE", code: 3, userInfo: [NSLocalizedDescriptionKey: "\(name) is not a PDF"])
+        }
+        let file = "p_" + SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined() + ".pdf"
+        lock.lock(); defer { lock.unlock() }
+        try FileManager.default.createDirectory(at: papersDir, withIntermediateDirectories: true)
+        let url = papersDir.appendingPathComponent(file)
+        if !FileManager.default.fileExists(atPath: url.path) { try data.write(to: url, options: .atomic) }
+        return ["file": file, "name": name, "size": data.count]
+    }
+
+    public func importPaper(from url: URL) throws -> [String: Any] {
+        try importPaper(data: try Data(contentsOf: url), name: url.lastPathComponent)
     }
 
     /// Rewrites the title inside the JSON and returns the updated document.

@@ -398,3 +398,19 @@ def test_tempdir_cleanup_safety():
         runner.run("x", "print(1)", PythonSettings("/nonexistent/python", [], 5), lambda _: None)
     assert not any((d / "runs").iterdir()) if (d / "runs").exists() else True
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_papers_are_stored_once_by_content_and_stay_in_their_folder(tmp_path):
+    store = BoardStore(tmp_path / "Boards")
+    pdf = b"%PDF-1.4\n1 0 obj << >> endobj\n%%EOF\n"
+    a = store.import_paper(pdf, "paper.pdf")
+    b = store.import_paper(pdf, "copy.pdf")
+    assert a["file"] == "p_59ad1790831d5ba1.pdf"  # sha-256 prefix, as in the macOS app and the dev harness
+    assert b["file"] == a["file"] and b["name"] == "copy.pdf"  # the same bytes are stored once
+    assert store.paper_path(a["file"]).read_bytes() == pdf
+    assert store.papers_dir.parent == store.dir
+    assert store.list() == []  # papers are not boards
+    assert store.paper_path("../learner.json") is None
+    assert store.paper_path("p_../../x.pdf") is None
+    with pytest.raises(BoardStoreError):
+        store.import_paper(b"hello", "notes.txt")

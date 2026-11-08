@@ -8,6 +8,7 @@ question. The answer opens **to the right**, connected to what you circled. Insi
 highlight again and drill deeper. When you're done, close the side columns (`Esc`, the ✕, the
 breadcrumb, or the eraser on the chalk ledge) and you're back at the original equation. Every board
 is saved with all of its branches, and the circled spots stay marked so you can reopen any branch later.
+You can also **read a PDF paper** on the board and highlight its passages the same way.
 
 ![A board on kernel ridge regression: the original question, a side question on the circled formula, a deeper one beside it, and the board summary on the right](docs/screenshot.jpg)
 
@@ -15,6 +16,19 @@ is saved with all of its branches, and the circled spots stay marked so you can 
 
 - **Lateral drill-down.** Each side question is a column anchored to the exact text or formula you
   highlighted. Columns chain to any depth, with a breadcrumb and a *board map* to jump between levels.
+- **Read a paper.** **▤ paper** (⌘O), or dropping a PDF on the board, opens it in the first column.
+  - Highlight any passage, a sentence or a formula, and ask about it. The answer opens to the right, circled and
+    connected to the spot on the page, and you can drill deeper from there as usual. The question chips change to
+    suit a paper (*explain this passage*, *what does this notation mean?*, *how does this fit into the rest of
+    the paper?*).
+  - The bar under the paper asks about the paper as a whole.
+  - The model is given the paper's text: the highlighted page, the pages around it and the first page (title and
+    abstract), or the paper from the start for whole-paper questions. It is told to rebuild formulas that come out
+    of the PDF garbled, and to keep to the paper's notation.
+  - The paper is chalked onto the slate; **☐ paper** switches to black on white. Pages are drawn as you scroll.
+  - The PDF is copied into the Boards folder (`Boards/papers`), so the board keeps working if the original moves.
+    Opening the same file again goes back to its board. The board summary covers the side questions about the paper.
+  - Rendering is Mozilla's pdf.js.
 - **Real math.** KaTeX renders LaTeX, matrices (`pmatrix`, `bmatrix`, …) and Dirac notation
   (`\ket`, `\bra`, `\braket`). The **▦ matrix** helper builds matrices with presets (I, X, Y, Z, H, S, T, CNOT).
 - **It learns where you stand.**
@@ -135,6 +149,7 @@ To run everything on OpenRouter (explanations, summaries, the level-set and diag
 | | macOS | Linux |
 | --- | --- | --- |
 | boards (one JSON file each) | `~/Library/Application Support/EquationExplainer/Boards` | `~/.local/share/EquationExplainer/Boards` |
+| PDF papers opened on boards | `Boards/papers` (one copy per file, named by its content) | same |
 | learner profile and your notes | next to the Boards folder, written owner-only (0600) | same |
 | managed Python environment | `…/EquationExplainer/pyenv` | `…/EquationExplainer/pyenv` |
 
@@ -156,6 +171,7 @@ macOS uses ⌘, Linux uses Ctrl; the tooltips in the app show the right one.
 | board summary | `⇧⌘S` | `Ctrl+Shift+S` |
 | level-set now / where you stand and my notes | `⇧⌘L` / `⌥⌘L` | `Ctrl+Shift+L` / `Ctrl+Alt+L` |
 | new board / write on the board | `⌘N` / `⌘L` | `Ctrl+N` / `Ctrl+L` |
+| read a PDF paper | `⌘O` (or drop a PDF on the board) | `Ctrl+O` |
 | zoom in / out / actual size | `⌘=` / `⌘−` / `⌘0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | write / new line | `Enter` / `Shift+Enter` (`⌘Enter` runs in python mode, saves a note) | same with `Ctrl+Enter` |
 
@@ -165,13 +181,15 @@ macOS uses ⌘, Linux uses Ctrl; the tooltips in the app show the right one.
 make test       # unit tests for this OS: Swift (macOS) or pytest (Linux): config, SSE parsing, streaming, storage, python runner
 make dev        # same UI in a browser at http://127.0.0.1:5178 with a Node bridge
 make selftest   # drives the real app end to end against your LLM and saves snapshots to /tmp/ee-selftest
+                # (it reads a built-in one-page paper; pass --selftest-pdf FILE to the app to use a real one)
 make help       # every target, including the explicit mac-* and linux-* ones
 ```
 
 Layout:
 
 - `shared/web` is the blackboard UI in plain JS, used unchanged by both apps and the dev harness, with vendored
-  KaTeX, marked, DOMPurify, highlight.js and dagre (diagram layout), and the chalk fonts for non-Mac platforms.
+  KaTeX, marked, DOMPurify, highlight.js, dagre (diagram layout) and pdf.js (papers, with its standard fonts and
+  CMaps), and the chalk fonts for non-Mac platforms.
 - `shared/python` holds the cell runner, `boardkit` and the matplotlib chalk style.
 - `macos/` is the Swift package: `Sources/EECore` (the testable core: `.env` and config, the streaming client,
   the Python runner, board storage), `Sources/EquationExplainer` (the SwiftUI shell, the WKWebView host and the
@@ -199,5 +217,5 @@ project by you, as defined in the Apache-2.0 license, shall be dual licensed as 
 additional terms or conditions.
 
 The vendored libraries in `shared/web/vendor` keep their own licenses: KaTeX, marked and dagre (MIT),
-DOMPurify (Apache-2.0 or MPL-2.0) and highlight.js (BSD-3-Clause). The fonts in `shared/web/fonts` are under the
+DOMPurify (Apache-2.0 or MPL-2.0), highlight.js (BSD-3-Clause) and pdf.js (Apache-2.0, `vendor/pdfjs/LICENSE`). The fonts in `shared/web/fonts` are under the
 SIL Open Font License 1.1 (their `OFL-*.txt` files sit next to them).

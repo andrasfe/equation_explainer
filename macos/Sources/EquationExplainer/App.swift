@@ -59,6 +59,7 @@ struct BoardCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Board") { model.newBoard() }.keyboardShortcut("n")
+            Button("Open PDF Paper…") { model.web.command("openPdf") }.keyboardShortcut("o")
         }
         CommandMenu("Board") {
             Button("Close Side Question") { model.web.command("closeLast") }

@@ -42,6 +42,47 @@ The student asked for code, so code is welcome in this answer. Use fenced \`\`\`
 
 The student highlighted part of an earlier explanation and is asking a side question about exactly that part. Zoom in: answer only the side question, deriving the highlighted piece step by step from what came before. Do not repeat the whole earlier explanation.`;
 
+  const PAPER_BRANCH = String.raw`
+
+The student highlighted a passage of the paper and is asking about exactly that passage. Zoom in: explain it step by step (what it says, what its notation means, and why it holds or how it follows from what the paper establishes before it). Do not summarize the whole paper.`;
+
+  const PAPER_WHOLE = String.raw`
+
+The student is asking about the paper as a whole. Answer from the paper's text below, and point to the pages or sections you draw on.`;
+
+  /** Page number of a paper anchor ("pdf:3" -> 3); null for the whole paper or an answer. */
+  const pageOf = (cardId) => { const m = /^pdf:(\d+)$/.exec(cardId || ''); return m ? Number(m[1]) : null; };
+  const isPaperAnchor = (a) => !!a && /^pdf(:|$)/.test(a.cardId || '');
+
+  /** The system-prompt section with the paper's text: around the highlighted page, or from the start for the whole paper. */
+  function paperSection(paper, anchor) {
+    const pages = (paper && paper.pages) || [];
+    const L = ['', '', `THE PAPER. The student is reading the paper "${paper.title}"${paper.name && paper.name !== paper.title ? ` (${paper.name})` : ''}, shown on the left of the board, and asks about passages they highlight in it.`,
+      'Its text, extracted from the PDF, follows. Mathematics extracted from a PDF is often garbled (lost sub- and superscripts, symbols out of order); reconstruct the intended formulas from the context and write them properly in LaTeX. Use the paper\'s own notation, and say which page or section something comes from when that helps. Where the paper does not say something, say so, then explain from general knowledge.'];
+    if (!pages.length) return L.concat('(The text of the paper could not be extracted; work from the highlighted passage alone.)').join('\n');
+    const clip = (t, n, tail) => (t.length <= n ? t : tail ? '…' + t.slice(t.length - n) : t.slice(0, n) + '…');
+    const n = pageOf(anchor && anchor.cardId);
+    const parts = [];
+    if (n) {
+      if (n > 1) parts.push([1, clip(pages[0], 2500)]);
+      if (n > 2) parts.push([n - 1, clip(pages[n - 2], 1500, true)]);
+      parts.push([n, clip(pages[n - 1] || '', 6000)]);
+      if (n < pages.length) parts.push([n + 1, clip(pages[n], 1500)]);
+    } else {
+      let budget = 14000;
+      const last = pages.length;
+      for (let i = 1; i <= last && budget > 600; i++) {
+        const t = clip(pages[i - 1], budget);
+        parts.push([i, t]);
+        budget -= t.length;
+      }
+      if (parts[parts.length - 1][0] < last) parts.push([last, clip(pages[last - 1], 2500)]);
+    }
+    for (const [i, t] of parts) L.push('', `--- page ${i} of ${pages.length}${i === n ? ' (the highlighted passage is on this page)' : ''} ---`, t);
+    L.push('--- end of the excerpts ---');
+    return L.join('\n');
+  }
+
   const COMPUTE = String.raw`
 
 COMPUTE MODE. The student wants the calculation done for them. Reply with:
@@ -273,19 +314,22 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
     ? EE.render.splitThink(card.text).body.trim() : '');
 
   /** Chat messages for a study summary of one board, plus the tag -> question map its links point to. */
-  function summaryMessages(board, notes) {
+  function summaryMessages(board, notes, paper) {
     const { list, visit } = boardQuestions(board);
     const byCard = new Map(list.map((q) => [q.cardId, q]));
     let answers = 0;
     visit((t, card) => { if (answerBody(card)) answers++; });
     const cap = Math.min(4000, Math.max(500, Math.floor(36000 / Math.max(1, answers))));
     const { truncate, clean, texToText } = EE.util;
-    const lines = [`BOARD "${texToText(board.title) || 'Untitled'}"`, ''];
+    const lines = [paper ? `PAPER "${paper.title}" (the session was spent reading it; the side questions are about passages highlighted in it)`
+      : `BOARD "${texToText(board.title) || 'Untitled'}"`, ''];
     visit((t, card, k, depth) => {
       const pad = '  '.repeat(depth);
       if (card.role === 'user') {
         const q = byCard.get(card.id);
-        const what = q.side ? `side question about "${truncate(clean((t.anchor && (t.anchor.llmText || t.anchor.quote)) || ''), 160)}"`
+        const pg = t.anchor && pageOf(t.anchor.cardId);
+        const what = q.side && isPaperAnchor(t.anchor) ? (pg ? `question about a passage of the paper (p. ${pg}): "${truncate(clean(t.anchor.quote || ''), 160)}"` : 'question about the whole paper')
+          : q.side ? `side question about "${truncate(clean((t.anchor && (t.anchor.llmText || t.anchor.quote)) || ''), 160)}"`
           : !t.parentId && k === 0 ? 'main question' : 'follow-up';
         lines.push(`${pad}[${q.tag}] ${what}: ${truncate(card.text, 600)}`);
       } else if (card.role === 'assistant') {
@@ -300,7 +344,9 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
       }
     });
     const own = notesLines(notes);
-    const system = SUMMARY_SYSTEM + (own.length
+    const system = SUMMARY_SYSTEM + (paper
+      ? '\n\nThis session was spent reading a paper; most questions are about passages the student highlighted in it. In "The big picture", say in a sentence what the paper is about, then what the student explored in it.'
+      : '') + (own.length
       ? "\n\nTHE STUDENT'S OWN DIRECTIONS on how they want things presented (oldest first; the newer note wins). Follow them where they apply to a summary, while keeping it short:\n" + own.join('\n')
       : '');
     const user = `${lines.join('\n')}\n\nWrite the summary now. The tags are ${list.map((q) => q.tag).join(', ')}.`;
@@ -380,6 +426,13 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
   }
 
   function anchorPreamble(anchor) {
+    if (isPaperAnchor(anchor)) {
+      const n = pageOf(anchor.cardId);
+      if (!n) return 'Question about the whole paper:\n\n';
+      let p = `Question about this passage of the paper (page ${n}):\n> ${anchor.llmText.replace(/\n/g, '\n> ')}\n`;
+      if (anchor.context) p += `\n(Surrounding text on the page: "${anchor.context}")\n`;
+      return p + '\n';
+    }
     let s = `Side question about this part of your explanation:\n> ${anchor.llmText.replace(/\n/g, '\n> ')}\n`;
     if (anchor.partial && anchor.partial.length) {
       for (const p of anchor.partial) {
@@ -413,7 +466,8 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
 
   /** Messages for answering in `threadId`, stopping before `beforeCardId`.
    *  `learner` = {profile, items, notes} adapts the level; see learnerSection().
-   *  `opts.diagrams`: the diagram model is available, so the answer may ask for diagrams. */
+   *  `opts.diagrams`: the diagram model is available, so the answer may ask for diagrams.
+   *  `opts.paper`: {title, name, pages: [text]} when the board is a paper; its text goes into the system prompt. */
   function buildMessages(board, threadId, beforeCardId, mode, learner, opts = {}) {
     const path = pathTo(board, threadId);
     const msgs = [];
@@ -449,13 +503,18 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
     }
     if (merged.length && merged[0].role !== 'user') merged.unshift({ role: 'user', content: '(continuing)' });
     const code = mode === 'compute' || wantsCode(lastQuestion);
+    // on a paper, the side question at the first level is about a passage (or the whole paper); deeper ones about an answer
+    const paperAnchor = opts.paper && path.length > 1 ? board.threads[path[1]].anchor : null;
+    const own = board.threads[threadId].anchor;
+    const branch = path.length < 2 ? '' : !isPaperAnchor(own) ? BRANCH : pageOf(own.cardId) ? PAPER_BRANCH : PAPER_WHOLE;
     const system = SYSTEM + (opts.diagrams && mode !== 'compute' ? EE.diagram.RULE : '') + learnerSection(learner) +
-      (path.length > 1 ? BRANCH : '') + (code ? CODE : '') + (mode === 'compute' ? COMPUTE : '');
+      (opts.paper ? paperSection(opts.paper, paperAnchor) : '') +
+      branch + (code ? CODE : '') + (mode === 'compute' ? COMPUTE : '');
     return [{ role: 'system', content: system }, ...merged];
   }
 
   return {
-    newBoard, newThread, pathTo, children, descendants, branchesOn, findCard, countBranches,
+    newBoard, newThread, pathTo, children, descendants, branchesOn, findCard, countBranches, pageOf, isPaperAnchor, paperSection,
     buildMessages, SYSTEM, wantsCode, repairJson, recapRule, learnerSection, notesLines, evidence, evidenceHash, levelSetMessages, parseProfile,
     SUMMARY_SYSTEM, boardQuestions, summaryMessages,
   };

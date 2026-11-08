@@ -1,12 +1,14 @@
 import AppKit
 import EECore
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 struct SelfTestOptions {
     var outDir: URL
     var keepOpen: Bool
     var prompt: String?
+    var pdf: String?
 }
 
 @MainActor
@@ -48,14 +50,16 @@ final class AppModel: ObservableObject {
         }
         store = BoardStore(dir: boardsDir)
         runner = PythonRunner(supportDir: support, kitDir: resources.appendingPathComponent("python"))
-        web = WebController(webRoot: resources.appendingPathComponent("web"))
+        let papers = store
+        web = WebController(webRoot: resources.appendingPathComponent("web")) { papers.paperURL($0) }
 
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--selftest"), i + 1 < args.count {
             let dir = URL(fileURLWithPath: (args[i + 1] as NSString).expandingTildeInPath, isDirectory: true)
             try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
             let prompt = args.firstIndex(of: "--selftest-prompt").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
-            selfTest = SelfTestOptions(outDir: dir, keepOpen: args.contains("--selftest-keep-open"), prompt: prompt)
+            let pdf = args.firstIndex(of: "--selftest-pdf").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+            selfTest = SelfTestOptions(outDir: dir, keepOpen: args.contains("--selftest-keep-open"), prompt: prompt, pdf: pdf)
         } else {
             selfTest = nil
         }
@@ -179,7 +183,10 @@ final class AppModel: ObservableObject {
             }
             if let st = selfTest {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.web.call("EE.selfTest", st.prompt.map { ["prompt": $0] } ?? [:])
+                    var opts: [String: Any] = [:]
+                    if let p = st.prompt { opts["prompt"] = p }
+                    if let p = st.pdf { opts["pdf"] = p }
+                    self?.web.call("EE.selfTest", opts)
                 }
             }
             return reply
@@ -293,12 +300,42 @@ final class AppModel: ObservableObject {
             NSLog("[board] %@", str("message"))
             return ["ok": true]
 
+        case "importPdf":
+            // bytes dropped on the board, a path (self test), or else the open panel
+            if let b64 = body["data"] as? String, let data = Data(base64Encoded: b64) {
+                return try store.importPaper(data: data, name: str("name").isEmpty ? "paper.pdf" : str("name"))
+            }
+            if !str("path").isEmpty {
+                let url = URL(fileURLWithPath: (str("path") as NSString).expandingTildeInPath)
+                guard url.pathExtension.lowercased() == "pdf" else { throw NSError(domain: "EE", code: 3, userInfo: [NSLocalizedDescriptionKey: "Not a PDF: \(url.lastPathComponent)"]) }
+                return try store.importPaper(from: url)
+            }
+            guard let url = await pickPDF() else { return ["cancelled": true] }
+            return try store.importPaper(from: url)
+
         case "selftest":
             return try await handleSelfTest(body)
 
         default:
             throw bridgeError("Unknown command \(cmd)")
         }
+    }
+
+    /// The open panel for a PDF, as a sheet on the board window.
+    private func pickPDF() async -> URL? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose a paper to read on the board"
+        panel.prompt = "Open"
+        let response: NSApplication.ModalResponse
+        if let window = web.webView.window {
+            response = await panel.beginSheetModal(for: window)
+        } else {
+            response = panel.runModal()
+        }
+        return response == .OK ? panel.url : nil
     }
 
     private func upsert(_ s: BoardSummary) {

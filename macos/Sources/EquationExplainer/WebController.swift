@@ -3,23 +3,35 @@ import WebKit
 
 /// Serves the bundled blackboard UI from ee-app://board/… so the page has a real
 /// origin (strict CSP with 'self', localStorage) without touching the network.
+/// ee-app://board/papers/<file> serves a PDF opened on a board from the Boards/papers folder.
 @MainActor
 final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     let root: URL
-    init(root: URL) { self.root = root.standardizedFileURL }
+    let paper: (String) -> URL?
+    init(root: URL, paper: @escaping (String) -> URL?) {
+        self.root = root.standardizedFileURL
+        self.paper = paper
+    }
 
     static let mime: [String: String] = [
         "html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
         "png": "image/png", "svg": "image/svg+xml", "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf",
-        "json": "application/json",
+        "json": "application/json", "mjs": "text/javascript; charset=utf-8", "pdf": "application/pdf",
     ]
 
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
         guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
         var path = url.path
         if path.isEmpty || path == "/" { path = "/index.html" }
-        let file = root.appendingPathComponent(String(path.dropFirst())).standardizedFileURL
-        guard file.path.hasPrefix(root.path + "/"), let data = try? Data(contentsOf: file) else {
+        let file: URL
+        if path.hasPrefix("/papers/") {
+            guard let f = paper(String(path.dropFirst("/papers/".count))) else { return task.didFailWithError(URLError(.fileDoesNotExist)) }
+            file = f
+        } else {
+            file = root.appendingPathComponent(String(path.dropFirst())).standardizedFileURL
+            guard file.path.hasPrefix(root.path + "/") else { return task.didFailWithError(URLError(.fileDoesNotExist)) }
+        }
+        guard let data = try? Data(contentsOf: file) else {
             return task.didFailWithError(URLError(.fileDoesNotExist))
         }
         let type = Self.mime[file.pathExtension.lowercased()] ?? "application/octet-stream"
@@ -42,9 +54,9 @@ final class WebController: NSObject, WKNavigationDelegate, WKUIDelegate, WKScrip
     private var pendingOrder: [String] = []
     private var flushScheduled = false
 
-    init(webRoot: URL) {
+    init(webRoot: URL, paper: @escaping (String) -> URL?) {
         let config = WKWebViewConfiguration()
-        config.setURLSchemeHandler(LocalSchemeHandler(root: webRoot), forURLScheme: "ee-app")
+        config.setURLSchemeHandler(LocalSchemeHandler(root: webRoot, paper: paper), forURLScheme: "ee-app")
         config.userContentController = WKUserContentController()
         webView = WKWebView(frame: .zero, configuration: config)
         super.init()

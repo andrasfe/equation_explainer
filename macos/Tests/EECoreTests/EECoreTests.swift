@@ -186,6 +186,25 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(store.profileURL.deletingLastPathComponent().path, dir.deletingLastPathComponent().path)
     }
 
+    func testPapersAreStoredOnceByContentAndStayInTheirFolder() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ee-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = BoardStore(dir: dir)
+        let pdf = Data("%PDF-1.4\n1 0 obj << >> endobj\n%%EOF\n".utf8)
+        let a = try store.importPaper(data: pdf, name: "paper.pdf")
+        let b = try store.importPaper(data: pdf, name: "copy.pdf")
+        let file = try XCTUnwrap(a["file"] as? String)
+        XCTAssertEqual(file, "p_59ad1790831d5ba1.pdf")                       // sha-256 prefix, as in the Linux app and the dev harness
+        XCTAssertEqual(b["file"] as? String, file)                           // the same bytes are stored once
+        XCTAssertEqual(b["name"] as? String, "copy.pdf")
+        XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(store.paperURL(file))), pdf)
+        XCTAssertEqual(store.papersDir.deletingLastPathComponent().path, dir.path)
+        XCTAssertEqual(store.list().count, 0)                                // papers are not boards
+        XCTAssertNil(store.paperURL("../learner.json"))
+        XCTAssertNil(store.paperURL("p_../../x.pdf"))
+        XCTAssertThrowsError(try store.importPaper(data: Data("hello".utf8), name: "notes.txt"))
+    }
+
     func testPrivateNotesLiveNextToBoardsOwnerOnly() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ee-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

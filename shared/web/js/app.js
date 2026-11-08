@@ -1,7 +1,9 @@
 /* The blackboard controller: state, actions, rendering. */
 (() => {
   const { uid, el, esc, debounce, truncate, plainTitle, rng, hash, clean, kbd, IS_MAC } = EE.util;
-  const R = EE.render, M = EE.model, A = EE.anchors, B = EE.bridge, DG = EE.diagram;
+  const R = EE.render, M = EE.model, A = EE.anchors, B = EE.bridge, DG = EE.diagram, P = EE.pdf;
+  const BODY = '.card-body, .pdf-text';              // where an anchor can live: an answer, or a page of a paper
+  const isPaperCard = (id) => /^pdf(:|$)/.test(id || '');
 
   const S = (EE.state = {
     board: null,
@@ -24,6 +26,7 @@
     summaryOpen: false,
     sums: new Map(),    // boardId -> summary being written {running, text, reasoning, error, refs, cancel}
     dgJobs: new Map(),  // `${cardId}:${key}` -> diagram being drawn {boardId, cancel}
+    paperLook: 'chalk', // how a PDF paper is shown: 'chalk' (inverted onto the slate) or 'paper'
   });
 
   const dom = {};
@@ -40,6 +43,13 @@
     { text: String.raw`Explain phase kickback: why does $U\ket{u} = e^{2\pi i\varphi}\ket{u}$ put the phase on the control qubit?`, mode: 'explain' },
     { text: String.raw`Why is $e^{i\pi} + 1 = 0$?`, mode: 'explain' },
   ];
+  const PAPER_CHIPS = [
+    { q: 'Explain this passage step by step.', mode: 'explain' },
+    { q: 'What does this notation mean?', mode: 'explain' },
+    { q: 'Why is this true?', mode: 'explain' },
+    { q: 'Give a concrete numerical example.', mode: 'explain' },
+    { q: 'How does this fit into the rest of the paper?', mode: 'explain' },
+  ];
   const CHIPS = [
     { q: 'How did you get to this?', mode: 'explain' },
     { q: 'Why is this true?', mode: 'explain' },
@@ -54,7 +64,7 @@
   // ------------------------------------------------------------ persistence
   const savers = new Map();
   const savedSnaps = new Map(); // boardId -> what is on disk, so unchanged boards are never re-dated
-  const isEmpty = (b) => Object.values(b.threads).every((t) => t.cards.length === 0);
+  const isEmpty = (b) => !b.pdf && Object.values(b.threads).every((t) => t.cards.length === 0);
   function snapsOf(b) {
     const { updatedAt, openPath, ...content } = b; // eslint-disable-line no-unused-vars
     return { content: JSON.stringify(content), nav: JSON.stringify(openPath) };
@@ -97,7 +107,7 @@
     }
     board.openPath = (board.openPath || ['root']).filter((id) => board.threads[id]);
     if (!board.openPath.length || board.openPath[0] !== 'root') board.openPath = ['root'];
-    cols.forEach((c) => c.root.remove());
+    cols.forEach((c) => { if (c.pdf) c.pdf.destroy(); c.root.remove(); });
     cols.clear();
     hidePopover();
     render();
@@ -158,8 +168,21 @@
     return { profile: S.profile, items, notes: S.notes };
   }
 
+  /** What the prompts need to know about the board's paper: its title and the text of every page. */
+  function paperOf(board) {
+    if (!board.pdf) return null;
+    return { title: EE.util.texToText(board.title) || board.pdf.name, name: board.pdf.name, pages: P.textNow(board.pdf.file) || [] };
+  }
+
+  const noText = new Set(); // papers whose text could not be extracted: ask without it
   function stream(board, threadId, card, mode) {
-    const messages = M.buildMessages(board, threadId, card.id, mode, learnerContext(board, card.id), { diagrams: diagramsOn() });
+    // a paper's text is extracted when it opens; a question asked in the first instant waits for it
+    if (board.pdf && !P.textNow(board.pdf.file) && !noText.has(board.pdf.file)) {
+      const go = () => { if (card.status === 'streaming' && !S.streams.has(card.id)) stream(board, threadId, card, mode); };
+      P.pageTexts(board.pdf.file).then(go, () => { noText.add(board.pdf.file); go(); });
+      return;
+    }
+    const messages = M.buildMessages(board, threadId, card.id, mode, learnerContext(board, card.id), { diagrams: diagramsOn(), paper: paperOf(board) });
     const h = B.chat(messages, {
       onChunk({ content, reasoning }) {
         card.text += content;
@@ -203,7 +226,7 @@
 
   function askAbout(anchor, question, mode = 'explain') {
     const board = S.board;
-    const found = M.findCard(board, anchor.cardId);
+    const found = isPaperCard(anchor.cardId) ? (board.pdf ? { thread: board.threads.root } : null) : M.findCard(board, anchor.cardId);
     if (!found || !question.trim()) return null;
     const th = M.newThread(board, found.thread.id, anchor, question.trim());
     th.cards.push({ id: uid('c'), role: 'user', text: question.trim(), mode, createdAt: Date.now() });
@@ -221,7 +244,7 @@
     b.openPath = M.pathTo(b, id);
     save(b, true);
     render();
-    requestAnimationFrame(() => revealColumn(id));
+    requestAnimationFrame(() => { revealColumn(id); revealPaperAnchor(b.threads[b.openPath[1]]); });
   }
 
   function closeThread(id) {
@@ -567,7 +590,7 @@
     const body = el('div', { class: 'col-body' });
     const list = el('div', { class: 'cards' });
     body.append(list);
-    const composer = buildComposer(threadId, i === 0);
+    const composer = i === 0 && S.board.pdf ? buildPaperBar() : buildComposer(threadId, i === 0);
     root.append(head, body, composer.root);
     body.addEventListener('scroll', scheduleOverlay, { passive: true });
     return { id: threadId, root, head, body, list, composer, cards: new Map(), headSig: '', tag: null, hero: null };
@@ -576,11 +599,22 @@
   function updateColumn(c, thread, i) {
     const b = S.board;
     const kids = M.descendants(b, thread.id).length;
-    const sig = JSON.stringify([i, b.title, thread.title, thread.anchor && thread.anchor.quote, kids, M.countBranches(b)]);
+    const sig = JSON.stringify([i, b.title, thread.title, thread.anchor && thread.anchor.quote, kids, M.countBranches(b), b.pdf && b.pdf.pages, S.paperLook]);
     if (sig !== c.headSig) {
       c.headSig = sig;
       c.head.replaceChildren();
-      if (i === 0) {
+      if (i === 0 && b.pdf) {
+        const n = M.countBranches(b);
+        const meta = [b.pdf.pages ? `${b.pdf.pages} pages` : '', n ? `${n} side question${n > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
+        c.head.append(
+          el('span', { class: 'paper-mark', title: b.pdf.name }, '▤'),
+          el('button', { class: 'col-title chalk-title', 'data-act': 'rename-board', title: `Rename board (${b.pdf.name})` }, EE.util.texToText(b.title) || b.pdf.name),
+          el('span', { class: 'spacer' }),
+          el('span', { class: 'col-meta' }, meta),
+          el('button', { class: 'icon-btn paper-look', 'data-act': 'paper-look', title: S.paperLook === 'chalk' ? 'Show the paper as printed, black on white' : 'Chalk it onto the slate' },
+            S.paperLook === 'chalk' ? '☐ paper' : '▨ chalk'));
+        c.tag = null;
+      } else if (i === 0) {
         const n = M.countBranches(b);
         c.head.append(
           el('button', { class: 'col-title chalk-title', 'data-act': 'rename-board', title: 'Rename board' }, EE.util.texToText(b.title) || 'A fresh board'),
@@ -599,8 +633,9 @@
       }
     }
 
+    if (i === 0 && b.pdf) mountPaper(c, b);
     // hero for an empty board
-    if (i === 0 && thread.cards.length === 0) {
+    if (i === 0 && thread.cards.length === 0 && !b.pdf) {
       if (!c.hero) { c.hero = buildHero(); c.body.prepend(c.hero); }
       c.root.classList.add('is-empty');
     } else if (c.hero) {
@@ -644,6 +679,9 @@
       el('h1', { class: 'chalk-title' }, 'What shall we work out today?'),
       el('p', { class: 'hero-sub' },
         'Write an equation, a matrix or a question. Then highlight any part of the answer to ask a side question. It opens to the right, and you can keep drilling down.'),
+      el('p', { class: 'hero-paper' },
+        el('button', { class: 'example paper-open', 'data-act': 'open-pdf', title: kbd('Open a PDF paper (⌘O)') }, '▤ read a paper'),
+        el('span', { class: 'muted' }, 'Open a PDF (or drop one on the board) and highlight any passage of it to ask about it.')),
       el('div', { class: 'examples' },
         EXAMPLES.map((ex, i) => el('button', { class: 'example', 'data-act': 'example', 'data-idx': i },
           el('span', { class: 'ex-mode' }, ex.mode === 'compute' ? 'compute' : 'explain'),
@@ -672,7 +710,10 @@
 
     if (card.role === 'user') {
       let html = '';
-      if (k === 0 && thread.anchor) html += `<blockquote class="anchor-quote">${R.markdown(thread.anchor.llmText)}</blockquote>`;
+      if (k === 0 && thread.anchor && isPaperCard(thread.anchor.cardId)) {
+        const pg = M.pageOf(thread.anchor.cardId);
+        html += `<blockquote class="anchor-quote paper-quote"><span class="paper-page">${pg ? 'p. ' + pg : 'the paper'}</span> ${pg ? esc(thread.anchor.quote) : esc(thread.anchor.llmText)}</blockquote>`;
+      } else if (k === 0 && thread.anchor) html += `<blockquote class="anchor-quote">${R.markdown(thread.anchor.llmText)}</blockquote>`;
       html += `<div class="q-text">${R.markdown(card.text)}</div>`;
       body.innerHTML = html;
       if (card.mode === 'compute') status.append(el('span', { class: 'badge' }, 'compute'));
@@ -955,8 +996,9 @@
     const b = S.board;
     const idle = [], active = [];
     for (const c of cols.values()) {
-      for (const [cardId, ce] of c.cards) {
-        const body = ce.querySelector('.card-body');
+      for (const [cardId, ce] of anchorables(c)) {
+        const body = ce.querySelector(BODY);
+        if (!body) continue;
         for (const t of M.branchesOn(b, cardId)) {
           const r = A.rangeFor(body, t.anchor);
           if (r) (b.openPath.includes(t.id) ? active : idle).push(r);
@@ -966,6 +1008,10 @@
     CSS.highlights.set('ee-anchor', new Highlight(...idle));
     CSS.highlights.set('ee-anchor-active', new Highlight(...active));
   }
+
+  /** Elements that can hold anchors in a column: its cards, plus the pages of a paper. */
+  const anchorables = (c) => (c.pdf ? [...c.cards, ...c.pdf.pages] : c.cards);
+  const anchorEl = (c, cardId) => c.cards.get(cardId) || (c.pdf && c.pdf.pages.get(cardId)) || null;
 
   let overlayQueued = false;
   function scheduleOverlay() {
@@ -1035,8 +1081,8 @@
       const tx = tr.left - st.left - 8;
       const ty = tr.top + tr.height / 2 - st.top;
       const vis = pc.body.getBoundingClientRect();
-      const ce = pc.cards.get(t.anchor.cardId);
-      const range = ce && A.rangeFor(ce.querySelector('.card-body'), t.anchor);
+      const ce = anchorEl(pc, t.anchor.cardId);
+      const range = ce && A.rangeFor(ce.querySelector(BODY), t.anchor);
       const rects = range ? [...range.getClientRects()].filter((r) => r.width > 1 && r.height > 1) : [];
       const seed = hash(t.id);
       const clipId = 'clip' + i;
@@ -1088,6 +1134,11 @@
   // ------------------------------------------------------------ selection popover
   function showPopover(anchor, range) {
     S.pending = { anchor, range };
+    const chips = isPaperCard(anchor.cardId) ? PAPER_CHIPS : CHIPS;
+    if (dom.popChips._set !== chips) {
+      dom.popChips._set = chips;
+      dom.popChips.replaceChildren(...chips.map((c) => el('button', { class: 'chip' + (c.mode === 'compute' ? ' compute' : ''), onclick: () => submitPopover(c.q, c.mode) }, c.q)));
+    }
     if (window.CSS && CSS.highlights && window.Highlight) CSS.highlights.set('ee-pending', new Highlight(range));
     dom.popQuote.textContent = '“' + truncate(clean(anchor.quote), 140) + '”';
     dom.popInput.value = '';
@@ -1115,11 +1166,11 @@
     const sel = getSelection();
     if (!sel || !sel.rangeCount || sel.isCollapsed) return null;
     const range = sel.getRangeAt(0).cloneRange();
-    const sb = elOf(range.startContainer) && elOf(range.startContainer).closest('.card-body');
+    const sb = elOf(range.startContainer) && elOf(range.startContainer).closest(BODY);
     if (!sb) return null;
-    const eb = elOf(range.endContainer) && elOf(range.endContainer).closest('.card-body');
-    if (eb !== sb) range.setEnd(sb, sb.childNodes.length); // e.g. triple-click spilling past the card
-    const cardId = sb.closest('.card').dataset.card;
+    const eb = elOf(range.endContainer) && elOf(range.endContainer).closest(BODY);
+    if (eb !== sb) range.setEnd(sb, sb.childNodes.length); // e.g. triple-click spilling past the card (or the page)
+    const cardId = sb.closest('[data-card]').dataset.card;
     const anchor = A.capture(sb, range, cardId);
     return anchor ? { anchor, range } : null;
   }
@@ -1127,9 +1178,9 @@
   function anchorAtPoint(x, y) {
     const pos = document.caretRangeFromPoint && document.caretRangeFromPoint(x, y);
     if (!pos) return null;
-    const body = elOf(pos.startContainer) && elOf(pos.startContainer).closest('.card-body');
+    const body = elOf(pos.startContainer) && elOf(pos.startContainer).closest(BODY);
     if (!body) return null;
-    const cardId = body.closest('.card').dataset.card;
+    const cardId = body.closest('[data-card]').dataset.card;
     for (const t of M.branchesOn(S.board, cardId)) {
       const r = A.rangeFor(body, t.anchor);
       if (r && r.isPointInRange(pos.startContainer, pos.startOffset)) return t.id;
@@ -1723,7 +1774,7 @@
   function writeSummary(board = S.board) {
     const busy = board && S.sums.get(board.id);
     if (!board || (busy && busy.running) || !hasAnswer(board)) return;
-    const { messages, refs, questions, sides } = M.summaryMessages(board, S.notes);
+    const { messages, refs, questions, sides } = M.summaryMessages(board, S.notes, paperOf(board));
     const job = { running: true, text: '', reasoning: '', error: null, refs, cancel: null };
     S.sums.set(board.id, job);
     renderSummary(true);
@@ -1878,6 +1929,7 @@
     render();
     requestAnimationFrame(() => {
       revealColumn(threadId);
+      revealPaperAnchor(b.threads[b.openPath[1]]);
       const c = cols.get(threadId);
       const ce = c && c.cards.get(cardId);
       if (!ce) return;
@@ -1889,6 +1941,132 @@
       setTimeout(() => ce.classList.remove('flash'), 1900);
       setTimeout(scheduleOverlay, 450);
     });
+  }
+
+  // ------------------------------------------------------------ papers (a PDF in the first column)
+  /** Show the board's paper in its first column (once; re-renders keep the same viewer). */
+  function mountPaper(c, b) {
+    if (c.pdf && c.pdf.file === b.pdf.file) return;
+    if (c.pdf) c.pdf.destroy();
+    c.root.classList.add('col-paper');
+    c.list.hidden = true;
+    c.pdf = P.mount(c.body, b.pdf.file, {
+      onReady(info) {
+        let changed = false;
+        if (b.pdf.pages !== info.doc.numPages) { b.pdf.pages = info.doc.numPages; changed = true; }
+        if (!b.pdf.titled) {
+          // the title printed on the paper beats the file name, until the board is renamed
+          b.pdf.titled = true;
+          if (info.title) b.title = info.title;
+          changed = true;
+          if (b === S.board) B.call('current', { id: b.id, title: b.title || '' }).catch(() => {});
+        }
+        if (changed) { save(b); if (b === S.board) render(); }
+        if (b === S.board) requestAnimationFrame(() => revealPaperAnchor(b.threads[b.openPath[1]], false));
+      },
+      onPage() { if (b === S.board) { applyHighlights(); scheduleOverlay(); } },
+      onLayout() { scheduleOverlay(); },
+      onError(e) { if (b === S.board) toast('The paper did not render fully: ' + e.message, 'error'); },
+    });
+  }
+
+  /** Scroll the paper so the passage a side question is about is in view (if it is not already). */
+  function revealPaperAnchor(t, smooth = true, retry = true) {
+    if (!t || !t.anchor || !isPaperCard(t.anchor.cardId)) return;
+    const c = cols.get('root');
+    const n = M.pageOf(t.anchor.cardId);
+    if (!c || !c.pdf || !n) return;
+    const pg = c.pdf.pages.get('pdf:' + n);
+    if (!pg) return;
+    const body = pg.querySelector('.pdf-text');
+    const r = body && A.rangeFor(body, t.anchor);
+    const box = r && r.getBoundingClientRect();
+    const hr = c.body.getBoundingClientRect();
+    if (box && box.height) {
+      if (box.top < hr.top + 10 || box.bottom > hr.bottom - 10) {
+        c.body.scrollBy({ top: box.top - hr.top - hr.height / 3, behavior: smooth ? 'smooth' : 'auto' });
+      }
+    } else {
+      c.pdf.scrollToPage(n, 0, smooth);
+      if (retry) setTimeout(() => revealPaperAnchor(t, smooth, false), 700); // its text layer appears once drawn
+    }
+    setTimeout(scheduleOverlay, 450);
+  }
+
+  /** The bar under a paper: questions about the paper as a whole open a side column like a highlight does. */
+  function buildPaperBar() {
+    const input = el('input', { class: 'chalk-input paper-ask', placeholder: 'Ask about the whole paper…', autocomplete: 'off', spellcheck: 'false' });
+    const go = el('button', { class: 'send-btn', title: 'Ask in a new column to the right' }, 'ask ↳');
+    const root = el('div', { class: 'composer paper-bar' },
+      el('div', { class: 'paper-hint' }, 'Highlight any passage to ask about it, or ask about the whole paper:'),
+      el('div', { class: 'paper-row' }, input, go));
+    const submit = () => {
+      const q = input.value.trim();
+      const b = S.board;
+      if (!q || !b.pdf) return;
+      input.value = '';
+      const c = cols.get('root');
+      askAbout({ cardId: 'pdf', start: 0, end: 0, quote: 'the whole paper', llmText: `the paper "${paperOf(b).title}"`,
+        partial: [], context: '', page: c && c.pdf ? c.pdf.currentPage() : 1 }, q);
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submit(); } });
+    go.addEventListener('click', submit);
+    return { root, ta: input, sync() {}, insert(text) { input.value += text; input.focus(); } };
+  }
+
+  /** Pick a PDF: the native open panel in the apps, a file input in the browser harness. */
+  async function openPdf() {
+    if (B.isNative) {
+      try {
+        const r = await B.call('importPdf');
+        if (r && r.file) openPaper(r);
+      } catch (e) {
+        toast('Could not open the PDF: ' + e.message, 'error');
+      }
+      return;
+    }
+    const input = el('input', { type: 'file', accept: 'application/pdf,.pdf', hidden: true });
+    input.addEventListener('change', () => { if (input.files && input.files[0]) importPaperFile(input.files[0]); input.remove(); });
+    document.body.append(input);
+    input.click();
+  }
+
+  /** A PDF handed over by the page itself (dropped, or picked in the browser): its bytes go to the native side. */
+  async function importPaperFile(f) {
+    try {
+      const buf = new Uint8Array(await f.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      const r = await B.call('importPdf', { data: btoa(bin), name: f.name || 'paper.pdf' });
+      if (r && r.file) openPaper(r);
+    } catch (e) {
+      toast('Could not open the PDF: ' + e.message, 'error');
+    }
+  }
+
+  /** Open a paper that is in the boards folder: on the board that already has it, or on a fresh board. */
+  function openPaper({ file, name }) {
+    const known = [...S.cache.values(), ...S.library.values()].filter((x) => x.pdf && x.pdf.file === file)
+      .sort((x, y) => (y.updatedAt || 0) - (x.updatedAt || 0))[0];
+    if (known) {
+      const live = S.cache.get(known.id);
+      if (live !== S.board) setBoard(live || known, !live);
+      toast('This paper already has a board, so that one is open again.');
+      return S.board;
+    }
+    const b = S.board && isEmpty(S.board) ? S.board : M.newBoard();
+    b.pdf = { file, name: name || 'paper.pdf', titled: false };
+    b.title = (name || 'paper').replace(/\.pdf$/i, '').replace(/[_]+/g, ' ').trim();
+    setBoard(b);
+    save(b);
+    return b;
+  }
+
+  function setPaperLook(look) {
+    S.paperLook = look;
+    try { localStorage.setItem('ee.paperLook', look); } catch (e) { /* ignore */ }
+    document.body.classList.toggle('paper-printed', look === 'paper');
+    render();
   }
 
   // ------------------------------------------------------------ events
@@ -1956,6 +2134,8 @@
       case 'fix-run': fixRun(cardId, idx); break;
       case 'lens': openLens(btn.closest('.katex-display')); break;
       case 'rename-board': renameBoard(); break;
+      case 'open-pdf': openPdf(); break;
+      case 'paper-look': setPaperLook(S.paperLook === 'chalk' ? 'paper' : 'chalk'); break;
       case 'summary-link': jumpToQuestion(btn.dataset.thread, btn.dataset.qcard); break;
       case 'diagram': { const f = M.findCard(b, cardId); if (f) addDiagram(b, f.card); break; }
       case 'dg-redraw': { const f = M.findCard(b, cardId); if (f) drawDiagram(b, f.card, btn.dataset.key); break; }
@@ -2054,8 +2234,22 @@
     promptBox.addEventListener('toggle', () => { try { localStorage.setItem('ee.promptOpen', promptBox.open ? '1' : '0'); } catch (e) { /* ignore */ } });
     dom.levelsetBtn.addEventListener('click', () => levelSet({ force: true, open: true }));
     $('btn-new').addEventListener('click', newBoard);
+    $('btn-pdf').addEventListener('click', openPdf);
+    // drop a PDF anywhere on the board to read it
+    document.addEventListener('dragover', (e) => {
+      if (e.dataTransfer && [...e.dataTransfer.items].some((it) => it.kind === 'file')) { e.preventDefault(); document.body.classList.add('dropping'); }
+    });
+    document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
+    document.addEventListener('drop', (e) => {
+      document.body.classList.remove('dropping');
+      const f = e.dataTransfer && [...e.dataTransfer.files].find((x) => x.type === 'application/pdf' || /\.pdf$/i.test(x.name));
+      if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      if (f) importPaperFile(f); else toast('Only PDF files can be opened on the board.', 'error');
+    });
+    try { S.paperLook = localStorage.getItem('ee.paperLook') === 'paper' ? 'paper' : 'chalk'; } catch (e) { /* ignore */ }
+    document.body.classList.toggle('paper-printed', S.paperLook === 'paper');
 
-    CHIPS.forEach((c) => dom.popChips.append(el('button', { class: 'chip' + (c.mode === 'compute' ? ' compute' : ''), onclick: () => submitPopover(c.q, c.mode) }, c.q)));
     $('pop-ask').addEventListener('click', () => submitPopover(dom.popInput.value));
     dom.popInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submitPopover(dom.popInput.value); }
@@ -2122,6 +2316,7 @@
         focus: () => focusComposer(), zoomChanged: () => setTimeout(scheduleOverlay, 50), config: showConfig,
         source: openSourcePanel, font: openFontPanel,
         levelset: () => levelSet({ force: true, open: true }), profile: () => toggleLearner(), summary: () => toggleSummary(),
+        openPdf,
       };
       if (cmds[name]) cmds[name]();
     },
@@ -2182,6 +2377,7 @@
     selectionToAnchor, showPopover, hidePopover, submitPopover, render, refreshConfig, toggleOutline, openMatrix,
     drawOverlay, findCardEl, levelSet, showProfile, toggleLearner, learnerContext, evidenceState, submitNote, removeNote,
     toggleSummary, writeSummary, summaryState, jumpToQuestion, drawDiagram, addDiagram, diagramsOn,
+    openPaper, importPaperFile, paperOf, revealPaperAnchor,
   };
   document.addEventListener('DOMContentLoaded', boot);
 })();

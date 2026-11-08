@@ -9,6 +9,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'shared', 'web');
@@ -17,6 +18,7 @@ const DATA_ROOT = process.env.EE_DEV_DATA || path.join(ROOT, 'dev', 'data');
 const DATA = path.join(DATA_ROOT, 'boards');
 const PROFILE = path.join(DATA_ROOT, 'learner.json');
 const NOTES = path.join(DATA_ROOT, 'learner-notes.json');
+const PAPERS = path.join(DATA, 'papers'); // PDFs opened on boards, named by content like the apps do
 const PORT = Number(process.argv[2] || process.env.PORT || 5178);
 // the managed Python environment of the desktop app on this platform
 const DATA_HOME = process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support')
@@ -25,7 +27,8 @@ const VENV_PY = path.join(process.env.EE_DATA_DIR || path.join(DATA_HOME, 'Equat
 fs.mkdirSync(DATA, { recursive: true });
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png',
-  '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.svg': 'image/svg+xml', '.json': 'application/json' };
+  '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.svg': 'image/svg+xml', '.json': 'application/json',
+  '.mjs': 'text/javascript', '.pdf': 'application/pdf' };
 
 function loadEnv() {
   const file = process.env.EE_ENV_FILE || path.join(ROOT, '.env'); // same override as the app
@@ -168,6 +171,16 @@ async function bridge(msg) {
       fs.writeFileSync(path.join(DATA, msg.id + '.json'), msg.json);
       return { ok: true };
     }
+    case 'importPdf': {
+      // the browser sends the bytes (file input or drop); a path is for scripted tests
+      const data = msg.data ? Buffer.from(msg.data, 'base64') : msg.path ? fs.readFileSync(msg.path.replace(/^~/, os.homedir())) : null;
+      if (!data) return { cancelled: true };
+      if (!data.subarray(0, 1024).toString('latin1').includes('%PDF-')) throw new Error(`${msg.name || 'that file'} is not a PDF`);
+      const file = 'p_' + crypto.createHash('sha256').update(data).digest('hex').slice(0, 16) + '.pdf';
+      fs.mkdirSync(PAPERS, { recursive: true });
+      if (!fs.existsSync(path.join(PAPERS, file))) fs.writeFileSync(path.join(PAPERS, file), data);
+      return { file, name: msg.name || (msg.path ? path.basename(msg.path) : 'paper.pdf'), size: data.length };
+    }
     case 'selftest': {
       if (msg.event === 'log') console.log('[selftest]', msg.message);
       if (msg.event === 'reload') return { board: fs.readFileSync(path.join(DATA, msg.id + '.json'), 'utf8') };
@@ -230,6 +243,13 @@ http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     if (req.method === 'POST' && url.pathname === '/bridge') return json(res, await bridge(JSON.parse(await readBody(req))));
     if (req.method === 'POST' && url.pathname === '/chat') return chat(req, res);
+    const paper = url.pathname.match(/^\/papers\/(p_\w+\.pdf)$/);
+    if (paper) {
+      const f = path.join(PAPERS, paper[1]);
+      if (!fs.existsSync(f)) { res.writeHead(404); return res.end('not found'); }
+      res.writeHead(200, { 'content-type': 'application/pdf' });
+      return fs.createReadStream(f).pipe(res);
+    }
     let p = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
     if (p === '/') p = '/index.html';
     const file = path.join(WEB, p);

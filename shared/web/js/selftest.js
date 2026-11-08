@@ -2,7 +2,8 @@
  * exercises the same code paths a person would: prompt → highlight → side
  * question → drill deeper → run Python → compute mode → close back to the
  * original → reload from disk → reopen a branch → summarize the board →
- * draw a circuit diagram.
+ * draw a circuit diagram → read a PDF paper and ask about a highlighted passage.
+ * opts.prompt replaces the first question; opts.pdf (a path) replaces the built-in one-page paper.
  */
 EE.selfTest = async function selfTest(opts = {}) {
   const app = EE.app, S = app.S, B = EE.bridge, sleep = EE.util.sleep;
@@ -83,6 +84,28 @@ EE.selfTest = async function selfTest(opts = {}) {
     }
     return null;
   };
+
+  /** A one-page PDF built here (Helvetica, not embedded), so the test needs no fixture file. */
+  function tinyPdf() {
+    const esc = (t) => t.replace(/[\\()]/g, (m) => '\\' + m);
+    const body = ['Phase kickback is the step that makes most quantum algorithms work.',
+      'When a controlled-U acts on a control in superposition and a target in an eigenstate of U,',
+      'the eigenvalue of the target becomes a relative phase on the control register.',
+      'Hence the target is left unchanged while the control picks up the phase e^(2 pi i phi).'];
+    const content = 'BT /F1 22 Tf 72 700 Td (Phase kickback in one page) Tj ET BT /F1 12 Tf 72 660 Td 18 TL ' +
+      body.map((l) => `(${esc(l)}) '`).join(' ') + ' ET';
+    const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`];
+    let out = '%PDF-1.4\n';
+    const offs = [];
+    objs.forEach((o, i) => { offs.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+    const xref = out.length;
+    out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map((o) => String(o).padStart(10, '0') + ' 00000 n \n').join('') +
+      `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    return btoa(out);
+  }
 
   await log('self test starting');
   let rootAnswer, branch1, branch2;
@@ -394,6 +417,59 @@ EE.selfTest = async function selfTest(opts = {}) {
     const dc = Object.values(disk.threads).flatMap((t) => t.cards).find((c) => c.id === card.id);
     assert(dc && dc.diagrams && JSON.stringify(dc.diagrams.m0.spec) === JSON.stringify(d.spec) && dc.diagrams.x1.spec, 'the diagrams were not saved with the board');
     return { model: d.model, circuit: ops.join(' '), extra: x.spec.type, wires: d.spec.wires.length };
+  });
+
+  await step('paper: open a PDF, highlight a passage, ask about it, reopen it from disk', async () => {
+    app.closeAll();
+    const r = opts.pdf ? await B.call('importPdf', { path: opts.pdf }) : await B.call('importPdf', { data: tinyPdf(), name: 'selftest-kickback.pdf' });
+    assert(r && r.file, 'the PDF was not imported: ' + JSON.stringify(r));
+    const board = app.openPaper(r);
+    assert(board && board.pdf && board.pdf.file === r.file, 'no board for the paper');
+    await waitFor(() => document.querySelector('.pdf-page[data-page="1"] .textLayer span'), 60000, 'the paper to render');
+    await waitFor(() => board.pdf.titled && board.pdf.pages, 10000, 'the paper title and page count');
+    const canvas = document.querySelector('.pdf-page[data-page="1"] .pdf-canvas');
+    assert(canvas && canvas.width > 100, 'page 1 was not drawn');
+    await settle();
+    await snap('11-paper');
+    // highlight one printed line of page 1, the way a mouse drag would
+    const layer = document.querySelector('.pdf-page[data-page="1"] .pdf-text');
+    const span = [...layer.querySelectorAll('span')].find((x) => x.textContent.trim().length >= 40) ||
+      [...layer.querySelectorAll('span')].find((x) => x.textContent.trim().length >= 12);
+    assert(span, 'no line of text on page 1');
+    span.scrollIntoView({ block: 'center' });
+    await sleep(200);
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    const rr = range.getBoundingClientRect();
+    layer.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, clientX: rr.right - 1, clientY: rr.bottom - 1 }));
+    await waitFor(() => !app.dom.popover.hidden, 3000, 'the side-question popover');
+    const anchor = S.pending.anchor;
+    assert(anchor.cardId === 'pdf:1', 'the anchor is not on page 1: ' + anchor.cardId);
+    const chip = [...document.querySelectorAll('#pop-chips .chip')].find((b) => /passage/.test(b.textContent));
+    assert(chip, 'the popover does not offer the paper questions');
+    const before = Object.keys(board.threads).length;
+    chip.click();
+    await sleep(300);
+    const tid = board.openPath[1];
+    assert(Object.keys(board.threads).length === before + 1 && board.threads[tid].anchor.cardId === 'pdf:1', 'no side question on the passage');
+    await idle();
+    const len = answerOk(lastCard(tid));
+    const sys = lastSystem();
+    const asked = sent.filter((m) => m.purpose === 'explain').pop().messages;
+    assert(sys.includes('THE PAPER') && sys.includes('--- page 1 of'), 'the prompt does not carry the paper');
+    assert(/highlighted a passage of the paper/.test(sys), 'the prompt does not say the question is about a passage');
+    assert(asked.some((m) => m.role === 'user' && m.content.includes('passage of the paper (page 1)')), 'the passage is not in the question');
+    await waitFor(() => document.querySelector('#overlay .chalk-loop'), 5000, 'the chalk circle around the passage');
+    await settle();
+    await snap('12-paper-question');
+    await sleep(1200); // let the save land
+    const disk = JSON.parse((await B.call('selftest', { event: 'reload', id: board.id })).board);
+    assert(disk.pdf && disk.pdf.file === r.file && disk.threads[tid] && disk.threads[tid].anchor.cardId === 'pdf:1', 'the paper board was not saved');
+    const served = await fetch('papers/' + r.file);
+    assert(served.ok, 'the PDF is not served from the boards folder');
+    return { file: r.file, title: board.title, pages: board.pdf.pages, quote: anchor.quote.slice(0, 60), answer: len, systemChars: sys.length };
   });
 
   await step('level-set button folds new ratings into the profile', async () => {

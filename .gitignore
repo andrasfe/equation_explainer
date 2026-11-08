@@ -16,6 +16,7 @@ __pycache__/
 
 # personal learner data lives in ~/Library/Application Support/EquationExplainer; never commit a copy
 Boards/
+papers/
 learner.json
 learner-notes.json
 

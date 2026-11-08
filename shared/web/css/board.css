@@ -652,3 +652,78 @@ body.learner-open #board, body.summary-open #board { margin-right: 446px; } /* t
 .dg-fig .dg-note.err { font-size: 13px; margin: 2px 2px 4px; }
 .modal-diagram { width: auto; max-width: calc(100vw - 40px); }
 .dg-modal-stage { overflow: auto; max-height: 72vh; padding: 12px 6px; }
+
+/* ===================================================================== papers (a PDF in the first column) */
+.paper-mark { color: var(--blue); font-size: 18px; flex: none; }
+.col-paper .col-title { min-width: 0; }
+.paper-look { font-size: 13px; white-space: nowrap; flex: none; }
+.pdf-doc { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 6px 0 24px; }
+.pdf-loading, .pdf-error { color: var(--chalk-dim); padding: 30px 8px; }
+.pdf-error { color: var(--pink); }
+.pdf-page {
+  position: relative; flex: none; overflow: hidden;
+  --scale-round-x: 1px; --scale-round-y: 1px;
+  background: rgba(0,0,0,0.12);
+  border-radius: 3px;
+}
+.pdf-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* chalk: the page inverted onto the slate, so the paper reads as chalk writing */
+body:not(.paper-printed) .pdf-canvas { filter: invert(0.93) hue-rotate(180deg) contrast(1.05); mix-blend-mode: screen; opacity: 0.94; }
+body:not(.paper-printed) .pdf-page { background: transparent; box-shadow: inset 0 0 0 1px var(--chalk-ghost); }
+/* printed: black on white, pinned to the board */
+body.paper-printed .pdf-page { background: #fff; box-shadow: 0 6px 18px rgba(0,0,0,0.45); }
+.pdf-no {
+  position: absolute; right: 6px; bottom: 4px; z-index: 2; pointer-events: none;
+  font-size: 12px; color: var(--chalk-faint);
+}
+body.paper-printed .pdf-no { color: rgba(0,0,0,0.35); }
+
+/* pdf.js text layer (from pdf.js's pdf_viewer.css, flattened): transparent, selectable text over the canvas */
+.textLayer {
+  position: absolute; inset: 0; overflow: clip; opacity: 1; line-height: 1; text-align: initial;
+  letter-spacing: normal; word-spacing: normal; -webkit-text-size-adjust: none; text-size-adjust: none;
+  forced-color-adjust: none; transform-origin: 0 0; caret-color: CanvasText; z-index: 1;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  text-shadow: none;
+}
+.textLayer span, .textLayer br {
+  color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%;
+  -webkit-user-select: text; user-select: text;
+}
+.textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent { display: contents; }
+.textLayer span[role="img"] { -webkit-user-select: none; user-select: none; cursor: default; }
+.textLayer ::selection { background: rgba(156,207,238,0.38); color: transparent; }
+.textLayer br::selection { background: transparent; }
+.textLayer .endOfContent {
+  display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default;
+  -webkit-user-select: none; user-select: none;
+}
+.textLayer.selecting .endOfContent { top: 0; }
+/* highlights on a paper: colour behind the printed text, never text drawn on top of it */
+.textLayer span::highlight(ee-anchor) { color: transparent; background-color: rgba(246,224,138,0.22); text-decoration: none; }
+.textLayer span::highlight(ee-anchor-active) { color: transparent; background-color: rgba(243,165,181,0.32); }
+.textLayer span::highlight(ee-pending) { color: transparent; background-color: rgba(156,207,238,0.42); }
+body.paper-printed .textLayer span::highlight(ee-anchor) { background-color: rgba(230,180,0,0.28); }
+body.paper-printed .textLayer span::highlight(ee-anchor-active) { background-color: rgba(220,60,110,0.25); }
+
+.paper-bar { padding: 8px 10px; }
+.paper-hint { font-size: 13px; color: var(--chalk-faint); margin: 0 2px 6px; }
+.paper-row { display: flex; gap: 8px; }
+.paper-quote .paper-page {
+  display: inline-block; font-size: 12px; color: var(--blue); border: 1px solid rgba(156,207,238,0.5);
+  border-radius: 8px; padding: 0 6px; margin-right: 4px; font-style: normal;
+}
+.hero-paper { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 18px; }
+.hero-paper .paper-open { color: var(--blue); border-color: rgba(156,207,238,0.55); flex: none; }
+.hero-paper .muted { font-size: 14px; }
+body.dropping #slate { outline: 3px dashed rgba(156,207,238,0.7); outline-offset: -8px; }

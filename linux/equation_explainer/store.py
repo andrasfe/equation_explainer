@@ -4,6 +4,7 @@ Mirrors macos/Sources/EECore/BoardStore.swift.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -29,6 +30,11 @@ class BoardStoreError(Exception):
 
 def valid_id(board_id: str) -> bool:
     return 0 < len(board_id) < 100 and all(c.isalnum() or c in "-_" for c in board_id)
+
+
+def valid_paper(file: str) -> bool:
+    """Paper files are named "p_<hash>.pdf", so a request can never leave the papers folder."""
+    return len(file) < 100 and file.startswith("p_") and file.endswith(".pdf") and all(c.isalnum() or c == "_" for c in file[:-4])
 
 
 def summary_from(data: bytes) -> Optional[BoardSummary]:
@@ -95,6 +101,33 @@ class BoardStore:
     def notes_path(self) -> Path:
         """The student's own notes: next to the Boards folder, never in the repo."""
         return self.dir.parent / "learner-notes.json"
+
+    # ---- papers (PDFs opened on boards)
+    @property
+    def papers_dir(self) -> Path:
+        """PDFs opened on boards are copied here, so a board keeps working after the original moves."""
+        return self.dir / "papers"
+
+    def paper_path(self, file: str) -> Optional[Path]:
+        return self.papers_dir / file if valid_paper(file) else None
+
+    def import_paper(self, data: bytes, name: str) -> dict:
+        """Copy a PDF into the papers folder under a name taken from its content (the same file is stored once)."""
+        if b"%PDF-" not in data[:1024]:
+            raise BoardStoreError(f"{name} is not a PDF")
+        file = "p_" + hashlib.sha256(data).hexdigest()[:16] + ".pdf"
+        with self._lock:
+            self.papers_dir.mkdir(parents=True, exist_ok=True)
+            target = self.papers_dir / file
+            if not target.exists():
+                tmp = target.with_name(file + ".tmp")
+                tmp.write_bytes(data)
+                os.replace(tmp, target)
+        return {"file": file, "name": name, "size": len(data)}
+
+    def import_paper_file(self, path: Path) -> dict:
+        path = Path(path)
+        return self.import_paper(path.read_bytes(), path.name)
 
     def _files(self) -> list[Path]:
         try:

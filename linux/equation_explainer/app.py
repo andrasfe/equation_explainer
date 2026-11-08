@@ -3,6 +3,7 @@ plus the JS <-> Python bridge (the same commands and callbacks as the macOS app)
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -36,7 +37,8 @@ SCHEME = "ee-app"
 START_URL = f"{SCHEME}://board/index.html"
 MIME = {"html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
         "png": "image/png", "svg": "image/svg+xml", "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf",
-        "json": "application/json", "txt": "text/plain; charset=utf-8"}
+        "json": "application/json", "txt": "text/plain; charset=utf-8", "mjs": "text/javascript; charset=utf-8",
+        "pdf": "application/pdf"}
 DEBUG = bool(os.environ.get("EE_DEBUG"))
 
 
@@ -61,6 +63,7 @@ class SelfTestOptions:
     out_dir: Path
     keep_open: bool
     prompt: Optional[str]
+    pdf: Optional[str] = None
 
 
 # ====================================================================== web view + bridge
@@ -111,10 +114,16 @@ class WebController:
         path = request.get_path() or "/"
         if path in ("", "/"):
             path = "/index.html"
-        file = (self.web_root / path.lstrip("/")).resolve()
         try:
-            if not str(file).startswith(str(self.web_root) + os.sep):
-                raise FileNotFoundError(path)
+            if path.startswith("/papers/"):  # a PDF opened on a board, from Boards/papers
+                paper = self.model.store.paper_path(path[len("/papers/"):]) if self.model else None
+                if paper is None:
+                    raise FileNotFoundError(path)
+                file = paper
+            else:
+                file = (self.web_root / path.lstrip("/")).resolve()
+                if not str(file).startswith(str(self.web_root) + os.sep):
+                    raise FileNotFoundError(path)
             data = file.read_bytes()
         except (OSError, FileNotFoundError):
             request.finish_error(GLib.Error(f"not found: {path}", "g-io-error-quark", int(Gio.IOErrorEnum.NOT_FOUND)))
@@ -499,7 +508,8 @@ class AppModel:
                         pass
             else:
                 st = self.self_test
-                GLib.timeout_add(1000, lambda: (self.web.call("EE.selfTest", {"prompt": st.prompt} if st.prompt else {}), False)[1])
+                opts = {k: v for k, v in (("prompt", st.prompt), ("pdf", st.pdf)) if v}
+                GLib.timeout_add(1000, lambda: (self.web.call("EE.selfTest", opts), False)[1])
             return reply
 
         if cmd == "config":
@@ -628,10 +638,57 @@ class AppModel:
             log("[board] " + s("message"))
             return {"ok": True}
 
+        if cmd == "importPdf":
+            # bytes dropped on the board, a path (self test), or else the open dialog
+            data = body.get("data")
+            if isinstance(data, str) and data:
+                return self.store.import_paper(base64.b64decode(data), s("name") or "paper.pdf")
+            if s("path"):
+                p = Path(os.path.expanduser(s("path")))
+                if p.suffix.lower() != ".pdf":
+                    raise ValueError(f"Not a PDF: {p.name}")
+                return self.store.import_paper_file(p)
+            picked = self._pick_pdf()
+            return self.store.import_paper_file(picked) if picked else {"cancelled": True}
+
         if cmd == "selftest":
             return self.handle_self_test(body)
 
         raise ValueError(f"Unknown command {cmd}")
+
+    def _pick_pdf(self) -> Optional[Path]:
+        """The open dialog for a PDF (from a worker thread: the dialog runs on the main loop, this waits for it)."""
+        ev = threading.Event()
+        box: dict[str, Optional[Path]] = {}
+
+        def start() -> None:
+            try:
+                dlg = Gtk.FileDialog(title="Choose a paper to read on the board", modal=True)
+                f = Gtk.FileFilter()
+                f.set_name("PDF papers")
+                f.add_mime_type("application/pdf")
+                f.add_suffix("pdf")
+                filters = Gio.ListStore.new(Gtk.FileFilter)
+                filters.append(f)
+                dlg.set_filters(filters)
+                dlg.set_default_filter(f)
+
+                def done(d, res) -> None:
+                    try:
+                        gf = d.open_finish(res)
+                        box["p"] = Path(gf.get_path()) if gf is not None and gf.get_path() else None
+                    except GLib.Error:  # dismissed
+                        box["p"] = None
+                    ev.set()
+
+                dlg.open(self.window, None, done)
+            except Exception:  # noqa: BLE001
+                log("open dialog failed:\n" + traceback.format_exc())
+                ev.set()
+
+        on_main(start)
+        ev.wait()  # as long as the person takes to choose
+        return box.get("p")
 
     def upsert(self, summary: BoardSummary) -> None:
         for i, b in enumerate(self.boards):
@@ -791,7 +848,7 @@ CSS = """
 """
 
 SHORTCUTS = [  # (accelerator, app action)
-    ("<Control>n", "new-board"), ("<Control>bracketleft", "close-last"), ("<Control><Shift>BackSpace", "close-all"),
+    ("<Control>n", "new-board"), ("<Control>o", "open-pdf"), ("<Control>bracketleft", "close-last"), ("<Control><Shift>BackSpace", "close-all"),
     ("<Control><Shift>m", "map"), ("<Control><Shift>s", "summary"), ("<Control><Alt>m", "matrix"), ("<Control>l", "focus"),
     ("<Control><Shift>l", "levelset"), ("<Control><Alt>l", "profile"), ("<Control>equal", "zoom-in"), ("<Control>plus", "zoom-in"),
     ("<Control>minus", "zoom-out"), ("<Control>0", "zoom-reset"), ("<Control>q", "quit"), ("<Control>w", "quit"),
@@ -1045,7 +1102,7 @@ class EEApplication(Adw.Application):
     def board_menu(self) -> Gio.Menu:
         menu = Gio.Menu()
         sections = [
-            [("New Board", "new-board")],
+            [("New Board", "new-board"), ("Open PDF Paper…", "open-pdf")],
             [("Close Side Question", "close-last"), ("Back to the Original", "close-all"), ("Board Map", "map"), ("Board Summary", "summary")],
             [("Insert Matrix…", "matrix"), ("Write on the Board", "focus")],
             [("Level-Set Now", "levelset"), ("Where I Stand & My Notes", "profile")],
@@ -1077,7 +1134,7 @@ class EEApplication(Adw.Application):
         act("new-board", lambda: m() and m().new_board())
         for name, page in (("close-last", "closeLast"), ("close-all", "closeAll"), ("map", "toggleMap"), ("summary", "summary"),
                            ("matrix", "insertMatrix"), ("focus", "focus"), ("levelset", "levelset"), ("profile", "profile"),
-                           ("config", "config")):
+                           ("config", "config"), ("open-pdf", "openPdf")):
             act(name, cmd(page))
         act("open-env", lambda: m() and m().open_env())
         act("reveal-boards", lambda: m() and m().reveal_boards_folder())
@@ -1117,6 +1174,7 @@ def parse_args(argv: list[str]) -> tuple[Optional[SelfTestOptions], list[str]]:
     out_dir = None
     keep_open = False
     prompt = None
+    pdf = None
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -1130,11 +1188,15 @@ def parse_args(argv: list[str]) -> tuple[Optional[SelfTestOptions], list[str]]:
             prompt = argv[i + 1]
             i += 2
             continue
+        elif a == "--selftest-pdf" and i + 1 < len(argv):
+            pdf = os.path.expanduser(argv[i + 1])
+            i += 2
+            continue
         elif a in ("--version", "-V"):
             print(f"Equation Explainer {__version__}")
             sys.exit(0)
         elif a in ("--help", "-h"):
-            print("usage: equation-explainer [--selftest DIR [--selftest-keep-open] [--selftest-prompt TEXT]]\n"
+            print("usage: equation-explainer [--selftest DIR [--selftest-keep-open] [--selftest-prompt TEXT] [--selftest-pdf FILE]]\n"
                   "Environment: EE_ENV_FILE, EE_DATA_DIR, EE_BOARDS_DIR, EE_RESOURCES, EE_DEBUG")
             sys.exit(0)
         else:
@@ -1143,7 +1205,7 @@ def parse_args(argv: list[str]) -> tuple[Optional[SelfTestOptions], list[str]]:
     self_test = None
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)
-        self_test = SelfTestOptions(out_dir, keep_open, prompt)
+        self_test = SelfTestOptions(out_dir, keep_open, prompt, pdf)
     return self_test, rest
 
 

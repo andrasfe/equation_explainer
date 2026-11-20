@@ -65,6 +65,18 @@ You can also **read a PDF paper** on the board and highlight its passages the sa
     means there is something to fold in.
   - The lessons are saved inside the board. **↻ rewrite from scratch** starts over from every question.
   - They are written by the board's model, and your notes apply.
+- **Recap.** **❡ recap** (⇧⌘R) pops up a detailed write-up of everything the board taught you. It is a
+  self-contained explanation of the topic that you can study from later, organised by the logic of the
+  topic rather than the order of your questions.
+  - It puts the weight on what did not sink in: answers you rated low, passages you asked side questions
+    about (especially chains of "how did you get this?"), and topics where your level-set profile is weak.
+    Those points are explained again step by step, with the skipped steps filled in, an example, and the
+    likely misconception, under *Where it got tricky*.
+  - It ends with the key formulas and a few exercises on what is still weakest. Links in the text jump
+    back to the questions.
+  - It is written the first time you open it and saved inside the board. After that it is shown as it is.
+    **↻ regenerate** rewrites it with the model currently picked in the top bar, and the old one stays
+    until the new one is finished. A dot on the button means you have asked more since.
 - **Diagrams.** Wherever an answer involves a circuit or an architecture, it draws one in chalk, right
   where it helps.
   - Quantum circuits (and reversible ones) are drawn on wires, with gates, controls, ⊕ targets, swaps,
@@ -176,7 +188,7 @@ macOS uses ⌘, Linux uses Ctrl; the tooltips in the app show the right one.
 | close the rightmost side question | `Esc` or `⌘[` | `Esc` or `Ctrl+[` |
 | back to the original (close all) | `⇧⌘⌫` | `Ctrl+Shift+Backspace` |
 | board map / insert matrix | `⇧⌘M` / `⌥⌘M` | `Ctrl+Shift+M` / `Ctrl+Alt+M` |
-| board summary / lessons learned | `⇧⌘S` / `⇧⌘K` | `Ctrl+Shift+S` / `Ctrl+Shift+K` |
+| board summary / lessons learned / recap | `⇧⌘S` / `⇧⌘K` / `⇧⌘R` | `Ctrl+Shift+S` / `Ctrl+Shift+K` / `Ctrl+Shift+R` |
 | level-set now / where you stand and my notes | `⇧⌘L` / `⌥⌘L` | `Ctrl+Shift+L` / `Ctrl+Alt+L` |
 | new board / write on the board | `⌘N` / `⌘L` | `Ctrl+N` / `Ctrl+L` |
 | read a PDF paper | `⌘O` (or drop a PDF on the board) | `Ctrl+O` |

@@ -117,6 +117,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .top-btn:disabled { opacity: 0.3; cursor: default; }
 .top-btn.on { color: var(--yellow); border-color: rgba(246,224,138,0.45); }
 .top-btn.status { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+/* narrow windows: the bar tightens instead of pushing the model menu off the edge */
+@media (max-width: 1260px) {
+  #topbar { gap: 3px; }
+  .top-btn { padding: 2px 6px; font-size: 14px; }
+  #model-select { max-width: 190px; }
+}
+@media (max-width: 1080px) {
+  .top-btn { padding: 2px 4px; font-size: 13px; }
+  #btn-back { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+  #model-select { max-width: 130px; }
+}
 .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); }
 .status.bad .dot { background: var(--pink); box-shadow: 0 0 6px var(--pink); }
 #model-select {
@@ -530,8 +541,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .poll-note.unrated { font-style: italic; }
 
 /* ===================================================================== level chip + profile */
-.level-chip, #btn-summary, #btn-lessons { position: relative; }
-.level-chip.stale::after, #btn-summary.stale::after, #btn-lessons.stale::after {
+.level-chip, #btn-summary, #btn-lessons, #btn-recap { position: relative; }
+.level-chip.stale::after, #btn-summary.stale::after, #btn-lessons.stale::after, #btn-recap.stale::after {
   content: ""; position: absolute; right: 2px; top: 3px; width: 6px; height: 6px; border-radius: 50%;
   background: var(--yellow); box-shadow: 0 0 5px var(--yellow);
 }
@@ -612,6 +623,13 @@ body.learner-open #board, body.summary-open #board { margin-right: 446px; } /* t
 .lessons-body h3:first-child { margin-top: 0.3em; }
 .lessons-body li { margin: 0.4em 0; }
 .lessons-body .katex-display > .katex { font-size: 1.1em; }
+.modal-recap { width: min(940px, calc(100vw - 40px)); }
+.recap-body { font-size: 15.5px; line-height: 1.6; }
+.recap-body h2 { font-size: 1.25em; color: var(--yellow); margin: 1.2em 0 0.35em; padding-bottom: 3px; border-bottom: 1px dashed var(--chalk-ghost); }
+.recap-body h2:first-child { margin-top: 0.3em; }
+.recap-body h3 { font-size: 1.05em; margin: 0.9em 0 0.25em; }
+.recap-body blockquote, .recap-body p.tricky { margin: 0.8em 0; padding: 6px 12px; border-left: 3px solid var(--pink); background: rgba(240, 160, 180, 0.07); border-radius: 0 10px 10px 0; }
+.recap-body blockquote strong:first-child, .recap-body p.tricky > strong:first-child { color: var(--pink); }
 /* a question you jumped to from the summary glows for a moment */
 .card.flash { animation: card-flash 1.8s ease-out; border-radius: 12px; }
 @keyframes card-flash {

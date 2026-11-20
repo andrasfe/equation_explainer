@@ -313,13 +313,16 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
   const answerBody = (card) => (card.role === 'assistant' && card.status !== 'error' && card.status !== 'streaming'
     ? EE.render.splitThink(card.text).body.trim() : '');
 
-  /** Chat messages for a study summary of one board, plus the tag -> question map its links point to. */
-  function summaryMessages(board, notes, paper) {
+  /**
+   * One board as a tagged transcript for the summary and the recap: every question ([Q1], [Q2], ...) in tree order,
+   * each answer squeezed to fit `budget` characters in all, with its sink-in rating; plus the tag -> question map.
+   */
+  function boardTranscript(board, paper, { budget = 36000, min = 500, max = 4000 } = {}) {
     const { list, visit } = boardQuestions(board);
     const byCard = new Map(list.map((q) => [q.cardId, q]));
     let answers = 0;
     visit((t, card) => { if (answerBody(card)) answers++; });
-    const cap = Math.min(4000, Math.max(500, Math.floor(36000 / Math.max(1, answers))));
+    const cap = Math.min(max, Math.max(min, Math.floor(budget / Math.max(1, answers))));
     const { truncate, clean, texToText } = EE.util;
     const lines = [paper ? `PAPER "${paper.title}" (the session was spent reading it; the side questions are about passages highlighted in it)`
       : `BOARD "${texToText(board.title) || 'Untitled'}"`, ''];
@@ -343,6 +346,14 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
         lines.push(`${pad}(the student ran their own Python: ${truncate(card.code, 200)}${run && run.stdout ? ` -> ${truncate(run.stdout, 200)}` : ''})`);
       }
     });
+    const refs = {};
+    for (const q of list) refs[q.tag] = { threadId: q.threadId, cardId: q.cardId, side: q.side };
+    return { lines, list, refs };
+  }
+
+  /** Chat messages for a study summary of one board, plus the tag -> question map its links point to. */
+  function summaryMessages(board, notes, paper) {
+    const { lines, list, refs } = boardTranscript(board, paper);
     const own = notesLines(notes);
     const system = SUMMARY_SYSTEM + (paper
       ? '\n\nThis session was spent reading a paper; most questions are about passages the student highlighted in it. In "The big picture", say in a sentence what the paper is about, then what the student explored in it.'
@@ -350,8 +361,47 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
       ? "\n\nTHE STUDENT'S OWN DIRECTIONS on how they want things presented (oldest first; the newer note wins). Follow them where they apply to a summary, while keeping it short:\n" + own.join('\n')
       : '');
     const user = `${lines.join('\n')}\n\nWrite the summary now. The tags are ${list.map((q) => q.tag).join(', ')}.`;
-    const refs = {};
-    for (const q of list) refs[q.tag] = { threadId: q.threadId, cardId: q.cardId, side: q.side };
+    return { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], refs, questions: list.length, sides: list.filter((q) => q.side).length };
+  }
+
+  // ------------------------------------------------------------------ recap (a detailed write-up of one board)
+  const RECAP_SYSTEM = String.raw`You write a detailed recap of one study session on a blackboard tutoring app for mathematics, physics and quantum computing. A session is a tree: the main question and its follow-ups, plus side questions the student asked about highlighted parts of an explanation, sometimes several levels deep. Every question carries a tag such as [Q3].
+
+The recap is a thorough, self-contained explanation of the topic that covers everything the student learned in the session, written so they can study from it later without the board. Organise it by the logic of the topic, not by the order of the questions, and fold every follow-up and side question into the place where it belongs.
+
+Put the weight where the student struggled. These signals say what was unclear:
+- After each explanation the student rated "did this sink in?" from 1 to 10; unrated counts as 1. A low rating means the explanation did not land.
+- A side question about a highlighted passage means that passage was unclear; a chain of side questions on the same spot, or questions like "how did you get this?" or "why?", means a real gap.
+- Topics the student is weak at overall, when listed.
+For every unclear point: explain it again from the ground up, more slowly and differently from the original answer. Fill in every skipped step of the derivation, give the intuition, a small concrete example, and name the misconception that probably caused the confusion. Mark these places with a blockquote that starts with **Where it got tricky:**. Ideas rated 8 or more need only a short, precise statement.
+
+Write Markdown with all mathematics in LaTeX ($...$ inline, $$...$$ display). Use exactly this outline:
+## Overview
+A paragraph: what the session set out to understand and the answer in essence.
+## (one section per main idea, with a descriptive heading)
+Explanations, derivations, worked examples and the tricky points, in a logical order.
+## Key formulas
+A compact list of the formulas that matter, each with one line on what it means.
+## Still worth practising
+Two to five bullets on what is still the weakest, each with a concrete exercise to try. Do not solve them.
+
+Links: point back to the questions with Markdown links whose target is the tag, for example [the controlled phase](#Q4), where a passage answers or revisits that question. Use only tags from the session; never write a bare tag such as [Q4].
+
+Be complete and precise rather than short: as long as the material needs. No code unless it is the clearest way to state a fact. Never mention ratings, tags or the app. No preamble and no closing remarks.`;
+
+  /** Chat messages for a detailed recap of one board, plus the tag -> question map its links point to. */
+  function recapMessages(board, notes, paper, profile) {
+    const { lines, list, refs } = boardTranscript(board, paper, { budget: 70000, min: 800, max: 8000 });
+    const own = notesLines(notes);
+    const weak = ((profile && profile.topics) || []).filter((t) => t.mastery <= 5).sort((a, b) => a.mastery - b.mastery).slice(0, 12);
+    const system = RECAP_SYSTEM + (paper
+      ? `\n\nThis session was spent reading the paper "${paper.title}"; most questions are about passages the student highlighted in it. In the overview, say what the paper is about; the recap explains the paper's ideas as far as the session explored them.`
+      : '') + (own.length
+      ? "\n\nTHE STUDENT'S OWN DIRECTIONS on how they want things presented (oldest first; the newer note wins). Follow them:\n" + own.join('\n')
+      : '');
+    const user = `${lines.join('\n')}\n\n` +
+      (weak.length ? `Topics the student is weak at overall (mastery out of 10): ${weak.map((t) => `${t.name} ${t.mastery}/10`).join('; ')}.\n\n` : '') +
+      `Write the recap now. The tags are ${list.map((q) => q.tag).join(', ')}.`;
     return { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], refs, questions: list.length, sides: list.filter((q) => q.side).length };
   }
 
@@ -591,6 +641,6 @@ Be concise: a high-level reference the student can review in a few minutes. No p
   return {
     newBoard, newThread, pathTo, children, descendants, branchesOn, findCard, countBranches, pageOf, isPaperAnchor, paperSection,
     buildMessages, SYSTEM, wantsCode, repairJson, recapRule, learnerSection, notesLines, evidence, evidenceHash, levelSetMessages, parseProfile,
-    SUMMARY_SYSTEM, boardQuestions, summaryMessages, LESSONS_SYSTEM, lessonItems, newLessonItems, lessonBatch, lessonsMessages,
+    SUMMARY_SYSTEM, boardQuestions, boardTranscript, summaryMessages, RECAP_SYSTEM, recapMessages, LESSONS_SYSTEM, lessonItems, newLessonItems, lessonBatch, lessonsMessages,
   };
 })();

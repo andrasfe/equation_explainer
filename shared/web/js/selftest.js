@@ -414,6 +414,47 @@ EE.selfTest = async function selfTest(opts = {}) {
     return { chars: l.text.length, questions: l.seen.length, model: l.model };
   });
 
+  await step('recap: written on first open with the selected model, saved, shown again as is, regenerates', async () => {
+    const job = () => S.recaps.get(S.board.id);
+    const recapDone = () => waitFor(() => !(job() || {}).running, 20 * 60 * 1000, 'the recap');
+    const before = sent.length;
+    document.getElementById('btn-recap').click();
+    assert(app.recapShown(), 'the recap pop-up did not open');
+    await sleep(300);
+    const asked = sent.slice(before).find((m) => m.purpose === 'summary');
+    assert(asked, 'opening the recap for the first time did not write one');
+    assert(/detailed recap/.test(asked.messages[0].content) && /Where it got tricky/.test(asked.messages[0].content), 'the request is not the recap prompt');
+    assert(asked.messages[0].content.includes(NOTE), 'the recap prompt lacks the private notes');
+    assert(/sink-in \d+\/10|unrated/.test(asked.messages[1].content), 'the recap prompt lacks the sink-in ratings');
+    for (const t of [branch1, branch2]) assert(asked.messages[1].content.includes(t.cards[0].text.slice(0, 40)), 'the recap prompt lacks a side question');
+    await recapDone();
+    assert(!job(), 'the recap failed: ' + (job() && job().error));
+    const rc = S.board.recap;
+    assert(rc && rc.text.length > 600, 'no recap written');
+    assert(document.querySelector('.recap-body h2'), 'the recap has no sections');
+    await snap('09c-recap');
+    await sleep(1200); // let the save land
+    const r = await B.call('selftest', { event: 'reload', id: S.board.id });
+    assert(r && r.board && (JSON.parse(r.board).recap || {}).text === rc.text, 'the recap was not saved with the board');
+    app.toggleRecap(false);
+    let n = sent.length;
+    app.toggleRecap(true);
+    await sleep(500);
+    assert(sent.length === n && !job(), 'reopening the recap wrote a new one');
+    const regen = [...document.querySelectorAll('.recap .chalk-btn')].find((b) => /regenerate/.test(b.textContent));
+    assert(regen, 'no regenerate button');
+    n = sent.length;
+    regen.click();
+    await sleep(300);
+    assert(sent.length === n + 1, 'regenerate did not ask the model');
+    assert(S.board.recap === rc, 'regenerating dropped the saved recap before the new one was ready');
+    await recapDone();
+    assert(!job(), 'regenerate failed: ' + (job() && job().error));
+    assert(S.board.recap !== rc && S.board.recap.createdAt > rc.createdAt, 'regenerate did not replace the recap');
+    app.toggleRecap(false);
+    return { chars: rc.text.length, regenerated: S.board.recap.text.length, model: rc.model };
+  });
+
   await step('diagrams: a circuit answer gets its circuit drawn, ◇ adds one, both are saved', async () => {
     if (!app.diagramsOn()) return { skipped: ((S.config.diagram || {}).problems || ['no diagram model'])[0] };
     const dgIdle = () => waitFor(() => S.dgJobs.size === 0, 5 * 60 * 1000, 'the diagram model');

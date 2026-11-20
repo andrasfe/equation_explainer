@@ -72,6 +72,8 @@ struct BoardCommands: Commands {
                 .keyboardShortcut("s", modifiers: [.command, .shift])
             Button("Lessons Learned") { model.web.command("lessons") }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
+            Button("Recap") { model.web.command("recap") }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
             Divider()
             Button("Insert Matrix…") { model.web.command("insertMatrix") }
                 .keyboardShortcut("m", modifiers: [.command, .option])

@@ -27,6 +27,7 @@
     sums: new Map(),    // boardId -> summary being written {running, text, reasoning, error, refs, cancel}
     dgJobs: new Map(),  // `${cardId}:${key}` -> diagram being drawn {boardId, cancel}
     paperLook: 'chalk', // how a PDF paper is shown: 'chalk' (inverted onto the slate) or 'paper'
+    recaps: new Map(),  // boardId -> recap being written {running, text, reasoning, error, refs, model, cancel}
     ljobs: new Map(),   // boardId -> lessons learned being written {running, text, reasoning, error, done, total, batch, rewrite, cancel}
   });
 
@@ -583,6 +584,7 @@
     renderOutline();
     renderSummary();
     renderLessons();
+    renderRecap();
     document.body.classList.toggle('has-branches', path.length > 1);
   }
 
@@ -1392,6 +1394,7 @@
     const c = S.config || {};
     toast(`New questions go to ${c.provider} · ${c.model}.`);
     if (S.summaryOpen) renderSummary(true);
+    renderRecap(true);
   }
 
   let toastTimer = null;
@@ -1638,6 +1641,7 @@
     dom.levelsetBtn.replaceChildren(S.ls.running ? el('span', { class: 'chalk-dots' }, 'assessing') : '⟳ level-set');
     if (S.learnerOpen) renderLearner();
     updateLessonsBtn();
+    updateRecapBtn();
   }
 
   const profileOpen = () => S.learnerOpen;
@@ -2107,6 +2111,160 @@
     lessonsView.replaceChildren(...out);
   }
 
+  // ------------------------------------------------------------ recap (a detailed write-up of this board, on demand)
+  /** The saved recap against the board as it is now: how many questions it has not seen yet. */
+  function recapState(board) {
+    const qs = M.boardQuestions(board).list;
+    const rc = board.recap;
+    const seen = new Set(rc ? Object.values(rc.refs || {}).map((r) => r.cardId) : []);
+    return { questions: qs.length, fresh: rc ? qs.filter((q) => !seen.has(q.cardId)).length : 0 };
+  }
+
+  /** Write (or rewrite) the board's recap with the model picked in the top bar; the old one stays until it is done. */
+  function writeRecap(board = S.board) {
+    const busy = board && S.recaps.get(board.id);
+    if (!board || (busy && busy.running) || !hasAnswer(board)) return;
+    const { messages, refs, questions, sides } = M.recapMessages(board, S.notes, paperOf(board), S.profile);
+    const cfg = S.config || {};
+    const job = { running: true, text: '', reasoning: '', error: null, refs, cancel: null, model: cfg.model || '' };
+    S.recaps.set(board.id, job);
+    const shown = () => { if (board === S.board) renderRecap(true); else updateRecapBtn(); };
+    shown();
+    const h = B.chat(messages, {
+      onChunk({ content, reasoning }) {
+        job.text += content;
+        if (reasoning) job.reasoning += reasoning;
+        if (board === S.board) scheduleRecap();
+      },
+      onDone({ model, cancelled }) {
+        job.running = false;
+        const text = R.splitThink(job.text).body.trim();
+        if (cancelled) {
+          S.recaps.delete(board.id); // the saved recap, if any, stays
+        } else if (!text) {
+          job.error = job.reasoning || R.splitThink(job.text).think
+            ? 'The model only produced scratch work (it may have hit the token limit). Try again or raise LLM_MAX_TOKENS.'
+            : 'The model returned an empty recap.';
+        } else {
+          board.recap = { text, refs, questions, sides, model: model || job.model, createdAt: Date.now() };
+          S.recaps.delete(board.id);
+          save(board);
+          if (board === S.board && !recapShown()) toast('Recap saved with the board.');
+        }
+        shown();
+      },
+      onError(err) {
+        job.running = false;
+        job.error = err.message;
+        shown();
+      },
+    }, { purpose: 'summary', llm: S.llm });
+    job.cancel = h.cancel;
+  }
+
+  let recapQueued = false;
+  function scheduleRecap() {
+    if (recapQueued) return;
+    recapQueued = true;
+    setTimeout(() => { recapQueued = false; renderRecap(true); }, 150);
+  }
+
+  let recapView = null;
+  const recapShown = () => !!recapView && !dom.modal.hidden && dom.modal.contains(recapView);
+
+  /** The recap pops up: the saved one as it is, or, the first time, a new one is written. Rewritten only on request. */
+  function toggleRecap(force) {
+    const open = typeof force === 'boolean' ? force : !recapShown();
+    if (!open) {
+      if (recapShown()) { dom.modal.hidden = true; dom.modal.replaceChildren(); }
+      recapView = null;
+      return;
+    }
+    if (recapShown() || !S.board) return;
+    recapView = el('div', { class: 'recap' });
+    const close = modal(el('div', {},
+      el('div', { class: 'lessons-head' },
+        el('h2', { class: 'modal-title chalk-title' }, 'recap'),
+        el('button', { class: 'icon-btn', title: 'Close (Esc)', onclick: () => close() }, '✕')),
+      recapView), 'modal-lessons modal-recap');
+    const b = S.board;
+    if (!b.recap && !S.recaps.get(b.id) && hasAnswer(b)) writeRecap(b);
+    renderRecap(true);
+  }
+
+  function updateRecapBtn() {
+    const b = S.board;
+    if (!dom.recapBtn || !b) return;
+    const rc = b.recap;
+    const job = S.recaps.get(b.id);
+    const running = !!(job && job.running);
+    const { fresh } = recapState(b);
+    dom.recapBtn.classList.toggle('stale', !!rc && fresh > 0 && !running);
+    dom.recapBtn.replaceChildren(running ? el('span', { class: 'chalk-dots' }, 'writing') : '❡ recap');
+    dom.recapBtn.title = (rc ? `Recap of this board (written ${EE.util.relTime(rc.createdAt)})`
+      : 'Recap: a detailed write-up of everything this board taught you, with extra care where it was unclear') +
+      (rc && fresh ? `\n${plural(fresh, 'question')} asked since` : '') + kbd(' (⇧⌘R)');
+  }
+
+  let recapSig = '';
+  function renderRecap(force = false) {
+    updateRecapBtn();
+    if (!recapShown()) return;
+    const b = S.board;
+    const rc = b.recap;
+    const job = S.recaps.get(b.id);
+    const st = recapState(b);
+    const cfg = S.config || {};
+    const sig = JSON.stringify([b.id, rc && rc.createdAt, job && [job.running, job.text.length, job.reasoning.length, job.error], st, hasAnswer(b), cfg.model]);
+    if (!force && sig === recapSig) return;
+    recapSig = sig;
+
+    const btn = (label, onclick, cls = '') => el('button', { class: 'chalk-btn small ' + cls, onclick }, label);
+    const body = (text, refs, done) => {
+      const d = summaryBody(text, refs, done);
+      d.classList.add('recap-body');
+      // the points that did not sink in stand out, whether the model quoted them or not
+      for (const st of d.querySelectorAll('p > strong:first-child')) {
+        if (/^where it got tricky/i.test(st.textContent) && !st.parentElement.closest('blockquote')) st.parentElement.classList.add('tricky');
+      }
+      return d;
+    };
+    const now = `${cfg.provider || '…'} · ${cfg.model || 'auto'}`;
+    const out = [el('p', { class: 'lessons-board' }, EE.util.texToText(b.title) || 'Untitled board')];
+    if (job && job.running) {
+      const text = R.splitThink(job.text).body;
+      out.push(el('div', { class: 'sum-meta' },
+        el('span', { class: 'chalk-dots' }, text ? `writing the recap with ${job.model || 'the model'}` : job.reasoning || job.text ? 'thinking it through' : 'reading the board'),
+        el('button', { class: 'link-btn', onclick: () => job.cancel && job.cancel() }, '■ stop')));
+      if (rc) out.push(el('p', { class: 'muted small' }, 'The saved recap stays until this one is finished.'));
+      if (text) out.push(body(text, job.refs, false));
+    } else {
+      if (job && job.error) {
+        out.push(el('div', { class: 'cfg-problems' }, el('div', {}, '⚠ ' + job.error)),
+          el('div', { class: 'modal-actions' }, btn('↻ try again', () => writeRecap(b), 'primary')));
+      }
+      if (rc) {
+        out.push(el('p', { class: 'muted small sum-meta' },
+          `Written ${EE.util.relTime(rc.createdAt)}${rc.model ? ' by ' + rc.model : ''}, from ${plural(rc.questions, 'question')}.`));
+        if (st.fresh) out.push(el('p', { class: 'small warn' }, `${plural(st.fresh, 'question')} asked since. Regenerate to work ${st.fresh === 1 ? 'it' : 'them'} in.`));
+        out.push(body(rc.text, rc.refs, true));
+        out.push(el('div', { class: 'modal-actions' },
+          btn('⎘ copy', () => copyText(rc.text.replace(/\[([^\]]*)\]\(#Q\d+\)/gi, '$1').replace(/\[Q\d+\]/gi, ''))),
+          btn(`↻ regenerate with ${cfg.model || 'the selected model'}`, () => writeRecap(b), st.fresh ? 'primary' : '')));
+      } else if (!job) {
+        const ready = hasAnswer(b);
+        out.push(el('p', { class: 'small' }, ready
+          ? 'A detailed write-up of everything this board taught you, explaining again, step by step, whatever did not sink in. It is saved with the board.'
+          : 'Nothing to recap yet. Ask a question first; the recap covers the main question, its follow-ups and every side question.'));
+        const go = btn('write the recap', () => writeRecap(b), 'primary');
+        if (!ready) go.disabled = true;
+        out.push(el('div', { class: 'modal-actions' }, go));
+      }
+    }
+    out.push(el('p', { class: 'muted small' }, `Regenerating uses the model picked in the top bar: ${now}. Your notes in the "where you stand" panel apply here too.`));
+    recapView.replaceChildren(...out);
+  }
+
   // ------------------------------------------------------------ papers (a PDF in the first column)
   /** Show the board's paper in its first column (once; re-renders keep the same viewer). */
   function mountPaper(c, b) {
@@ -2300,7 +2458,10 @@
       case 'rename-board': renameBoard(); break;
       case 'open-pdf': openPdf(); break;
       case 'paper-look': setPaperLook(S.paperLook === 'chalk' ? 'paper' : 'chalk'); break;
-      case 'summary-link': jumpToQuestion(btn.dataset.thread, btn.dataset.qcard); break;
+      case 'summary-link':
+        if (!dom.modal.hidden) { dom.modal.hidden = true; dom.modal.replaceChildren(); } // a link in the recap
+        jumpToQuestion(btn.dataset.thread, btn.dataset.qcard);
+        break;
       case 'diagram': { const f = M.findCard(b, cardId); if (f) addDiagram(b, f.card); break; }
       case 'dg-redraw': { const f = M.findCard(b, cardId); if (f) drawDiagram(b, f.card, btn.dataset.key); break; }
       case 'dg-stop': { const j = S.dgJobs.get(dgKey(cardId, btn.dataset.key)); if (j && j.cancel) j.cancel(); break; }
@@ -2369,7 +2530,7 @@
       dropdown: $('dropdown'), status: $('status'), modelSelect: $('model-select'), configBtn: $('btn-config'), levelBtn: $('btn-level'), levelsetBtn: $('btn-levelset'),
       learner: $('learner'), learnerProfile: $('learner-profile'), noteList: $('note-list'), noteInput: $('note-input'),
       noteSave: $('note-save'), noteCancel: $('note-cancel'), learnerPrompt: $('learner-prompt-text'), learnerBase: $('learner-base-text'),
-      summary: $('summary'), summaryContent: $('summary-content'), summaryBtn: $('btn-summary'), lessonsBtn: $('btn-lessons'),
+      summary: $('summary'), summaryContent: $('summary-content'), summaryBtn: $('btn-summary'), lessonsBtn: $('btn-lessons'), recapBtn: $('btn-recap'),
     });
     // shortcut hints in the static markup are written for a Mac; reword them for this platform
     if (!IS_MAC) {
@@ -2389,6 +2550,7 @@
     dom.summaryBtn.addEventListener('click', () => toggleSummary());
     $('summary-close').addEventListener('click', () => toggleSummary(false));
     dom.lessonsBtn.addEventListener('click', () => toggleLessons());
+    dom.recapBtn.addEventListener('click', () => toggleRecap());
     dom.noteSave.addEventListener('click', submitNote);
     dom.noteCancel.addEventListener('click', resetNoteInput);
     dom.noteInput.addEventListener('keydown', (e) => {
@@ -2468,7 +2630,7 @@
         const cached = S.cache.get(b.id);
         // a board still being written to (an answer, its summary, its lessons or a diagram) stays the same object
         const live = cached && ([...S.streams.values(), ...S.dgJobs.values()].some((s) => s.boardId === b.id) || !!(S.sums.get(b.id) || {}).running
-          || !!(S.ljobs.get(b.id) || {}).running);
+          || !!(S.ljobs.get(b.id) || {}).running || !!(S.recaps.get(b.id) || {}).running);
         setBoard(live ? cached : b, !live);
         updateLevelChip();
       } catch (e) {
@@ -2482,7 +2644,7 @@
         focus: () => focusComposer(), zoomChanged: () => setTimeout(scheduleOverlay, 50), config: showConfig,
         source: openSourcePanel, font: openFontPanel,
         levelset: () => levelSet({ force: true, open: true }), profile: () => toggleLearner(), summary: () => toggleSummary(),
-        lessons: () => toggleLessons(), openPdf,
+        lessons: () => toggleLessons(), recap: () => toggleRecap(), openPdf,
       };
       if (cmds[name]) cmds[name]();
     },
@@ -2501,6 +2663,9 @@
       const lj = S.ljobs.get(id);
       if (lj && lj.cancel) lj.cancel(); // nor its lessons
       S.ljobs.delete(id);
+      const rj = S.recaps.get(id);
+      if (rj && rj.cancel) rj.cancel(); // nor its recap
+      S.recaps.delete(id);
       for (const d of [...S.dgJobs.values()]) if (d.boardId === id && d.cancel) d.cancel();
       S.cache.delete(id);
       S.library.delete(id);
@@ -2545,7 +2710,7 @@
     S, cols, dom, send, askAbout, openThread, closeThread, closeAll, closeLast, runCode, newBoard, setBoard,
     selectionToAnchor, showPopover, hidePopover, submitPopover, render, refreshConfig, toggleOutline, openMatrix,
     drawOverlay, findCardEl, levelSet, showProfile, toggleLearner, learnerContext, evidenceState, submitNote, removeNote,
-    toggleSummary, writeSummary, summaryState, toggleLessons, updateLessons, lessonsShown, jumpToQuestion, drawDiagram, addDiagram, diagramsOn,
+    toggleSummary, writeSummary, summaryState, toggleLessons, updateLessons, lessonsShown, toggleRecap, writeRecap, recapShown, recapState, jumpToQuestion, drawDiagram, addDiagram, diagramsOn,
     openPaper, importPaperFile, paperOf, revealPaperAnchor,
   };
   document.addEventListener('DOMContentLoaded', boot);

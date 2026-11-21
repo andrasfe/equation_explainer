@@ -531,9 +531,7 @@ class AppModel:
                     "envFile": str(cfg.env_file) if cfg.env_file else "", "problems": problems, "python": python,
                     "packages": " ".join(cfg.python.packages),
                     "levelset": {"provider": cfg.level_set.display_name, "model": cfg.level_set.model or "auto",
-                                 "problems": cfg.level_set_problems},
-                    "diagram": {"provider": cfg.diagram.display_name, "model": cfg.diagram.model or "auto",
-                                "problems": cfg.diagram_problems}}
+                                 "problems": cfg.level_set_problems}}
 
         if cmd == "chat":
             raw = body.get("messages") or []
@@ -709,11 +707,9 @@ class AppModel:
     # ---- chat streaming
     def start_chat(self, chat_id: str, messages: list[dict], purpose: str, llm: str = "") -> None:
         cfg = self.config
-        # each purpose has its own model: explanations and summaries (the one picked in the top bar), the level-set, diagrams
+        # the level-set has its own model; everything else (explanations, summaries, diagrams) uses the one picked in the top bar
         if purpose == "levelset":
             settings, problems = cfg.level_set, cfg.level_set_problems
-        elif purpose == "diagram":
-            settings, problems = cfg.diagram, cfg.diagram_problems
         else:
             settings = cfg.choice(llm).settings
             problems = ([f"OPENROUTER_API_KEY is missing. Add it to {cfg.env_file or '.env'} or set LLM_PROVIDER=lmstudio."]

@@ -207,12 +207,10 @@ final class AppModel: ObservableObject {
             let python = cfg.python.interpreter ?? runner.supportDir.appendingPathComponent("pyenv/bin/python").path
             let levelSet: [String: Any] = ["provider": cfg.levelSet.displayName, "model": cfg.levelSet.model ?? "auto",
                                            "problems": cfg.levelSetProblems]
-            let diagram: [String: Any] = ["provider": cfg.diagram.displayName, "model": cfg.diagram.model ?? "auto",
-                                          "problems": cfg.diagramProblems]
             return ["provider": llm.displayName, "model": model, "baseURL": llm.baseURL.absoluteString,
                     "llm": choice.id, "choices": choices,
                     "envFile": cfg.envFile?.path ?? "", "problems": problems, "python": python,
-                    "packages": cfg.python.packages.joined(separator: " "), "levelset": levelSet, "diagram": diagram]
+                    "packages": cfg.python.packages.joined(separator: " "), "levelset": levelSet]
 
         case "chat":
             let id = str("id")
@@ -349,12 +347,11 @@ final class AppModel: ObservableObject {
 
     private func startChat(id: String, messages: [[String: String]], purpose: String, llm: String) {
         let cfg = config
-        // each purpose has its own model: explanations and summaries (the one picked in the top bar), the level-set, diagrams
+        // the level-set has its own model; everything else (explanations, summaries, diagrams) uses the one picked in the top bar
         let settings: LLMSettings
         let problems: [String]
         switch purpose {
         case "levelset": (settings, problems) = (cfg.levelSet, cfg.levelSetProblems)
-        case "diagram": (settings, problems) = (cfg.diagram, cfg.diagramProblems)
         default:
             settings = cfg.choice(llm).settings
             problems = settings.provider == .openrouter && settings.apiKey == nil

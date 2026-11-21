@@ -79,26 +79,6 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(local.levelSetProblems.isEmpty)
     }
 
-    func testDiagramModelDefaultsToOpenRouterQwenCoder() {
-        let missing = AppConfig.resolve(values: ["LLM_PROVIDER": "lmstudio"], envFile: nil)
-        XCTAssertEqual(missing.diagram.provider, .openrouter)
-        XCTAssertEqual(missing.diagram.model, "qwen/qwen3-coder-30b-a3b-instruct")
-        XCTAssertEqual(missing.diagram.temperature, 0.2)
-        XCTAssertEqual(missing.diagramProblems.count, 1)          // no key
-        XCTAssertTrue(missing.problems.isEmpty)                   // explanations (LM Studio) are fine
-
-        let ok = AppConfig.resolve(values: ["LLM_PROVIDER": "lmstudio", "OPENROUTER_API_KEY": "k", "DIAGRAM_MAX_TOKENS": "2000"], envFile: nil)
-        XCTAssertTrue(ok.diagramProblems.isEmpty)
-        XCTAssertEqual(ok.diagram.apiKey, "k")
-        XCTAssertEqual(ok.diagram.maxTokens, 2000)
-        XCTAssertEqual(ok.diagram.baseURL.absoluteString, "https://openrouter.ai/api/v1")
-
-        let local = AppConfig.resolve(values: ["DIAGRAM_PROVIDER": "lmstudio", "LMSTUDIO_MODEL": "gemma", "DIAGRAM_MODEL": "qwen-local"], envFile: nil)
-        XCTAssertEqual(local.diagram.provider, .lmstudio)
-        XCTAssertEqual(local.diagram.model, "qwen-local")
-        XCTAssertTrue(local.diagramProblems.isEmpty)
-    }
-
     func testModelChoicesListEveryConfiguredModel() {
         let c = AppConfig.resolve(values: ["LLM_PROVIDER": "lmstudio", "LMSTUDIO_MODEL": "gemma", "OPENROUTER_API_KEY": "k",
                                            "OPENROUTER_MODEL": "openai/gpt", "OPENROUTER_MODELS": "a/b, openai/gpt c/d",

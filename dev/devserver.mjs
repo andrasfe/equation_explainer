@@ -79,13 +79,6 @@ function loadEnv() {
     maxTokens: Number(get('LEVELSET_MAX_TOKENS') || 32000), problems: [],
     extra: get('LEVELSET_EXTRA_BODY') ? JSON.parse(get('LEVELSET_EXTRA_BODY')) : (lsProvider === 'openrouter' ? { response_format: { type: 'json_object' } } : {}) };
   if (lsProvider === 'openrouter' && !lsEp.apiKey) cfg.levelset.problems.push(`OPENROUTER_API_KEY is not set in .env. The level-set runs on OpenRouter (${cfg.levelset.model}).`);
-  // diagram model: OpenRouter + qwen/qwen3-coder-30b-a3b-instruct unless overridden
-  const dgProvider = (get('DIAGRAM_PROVIDER') || 'openrouter').toLowerCase();
-  const dgEp = endpoint(dgProvider);
-  cfg.diagram = { provider: dgProvider, ...dgEp, model: get('DIAGRAM_MODEL') || (dgProvider === 'openrouter' ? 'qwen/qwen3-coder-30b-a3b-instruct' : dgEp.model),
-    temperature: Number(get('DIAGRAM_TEMPERATURE') || 0.2), maxTokens: Number(get('DIAGRAM_MAX_TOKENS') || 4096), problems: [],
-    extra: get('DIAGRAM_EXTRA_BODY') ? JSON.parse(get('DIAGRAM_EXTRA_BODY')) : {} };
-  if (dgProvider === 'openrouter' && !dgEp.apiKey) cfg.diagram.problems.push(`OPENROUTER_API_KEY is not set in .env. Diagrams are drawn on OpenRouter (${cfg.diagram.model}); set DIAGRAM_PROVIDER=lmstudio to draw them locally.`);
   return cfg;
 }
 
@@ -145,12 +138,11 @@ async function bridge(msg) {
       const c = env.choices.find((x) => x.id === msg.llm) || env.choices[0];
       let model = c.model;
       try { model = await resolveModel(c); } catch (e) { c.problems.push(e.message); }
-      const ls = env.levelset, dg = env.diagram;
+      const ls = env.levelset;
       const name = (p) => (p === 'openrouter' ? 'OpenRouter' : p === 'custom' || p === 'openai' ? 'Custom' : 'LM Studio');
       return { provider: name(c.provider), model, baseURL: c.baseURL, envFile: env.envFile, problems: c.problems, python: VENV_PY, packages: 'numpy sympy scipy matplotlib',
         llm: c.id, choices: env.choices.map((x) => ({ id: x.id, provider: name(x.provider), model: x.model || '', problems: x.problems })),
-        levelset: { provider: name(ls.provider), model: ls.model || 'auto', problems: ls.problems },
-        diagram: { provider: name(dg.provider), model: dg.model || 'auto', problems: dg.problems } };
+        levelset: { provider: name(ls.provider), model: ls.model || 'auto', problems: ls.problems } };
     }
     case 'allBoards':
       return { boards: fs.readdirSync(DATA).filter((f) => f.endsWith('.json')).map((f) => fs.readFileSync(path.join(DATA, f), 'utf8')) };
@@ -199,7 +191,7 @@ async function chat(req, res) {
   res.on('close', () => ctrl.abort());
   try {
     const env = loadEnv();
-    const cfg = purpose === 'levelset' ? env.levelset : purpose === 'diagram' ? env.diagram : env.choices.find((x) => x.id === llm) || env.choices[0];
+    const cfg = purpose === 'levelset' ? env.levelset : env.choices.find((x) => x.id === llm) || env.choices[0];
     if (cfg.problems.length) throw new Error(cfg.problems.join('; '));
     const model = await resolveModel(cfg);
     const headers = { 'content-type': 'application/json' };

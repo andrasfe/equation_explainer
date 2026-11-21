@@ -324,8 +324,8 @@
   }
 
   // ------------------------------------------------------------ diagrams
-  /** The diagram model is configured (it runs on OpenRouter by default, so it needs the key). */
-  const diagramsOn = () => !!(S.config && S.config.diagram && !(S.config.diagram.problems || []).length);
+  /** Diagrams are drawn by the model that writes the text (the one picked in the top bar), so they are on once it is set up. */
+  const diagramsOn = () => !!(S.config && !(S.config.problems || []).length);
   const dgKey = (cardId, key) => cardId + ':' + key;
 
   /** Draw every diagram the finished answer asked for. */
@@ -390,7 +390,7 @@
           finish();
         },
         onError(err) { entry.error = err.message; finish(); },
-      }, { purpose: 'diagram' });
+      }, { purpose: 'diagram', llm: S.llm });
       job.cancel = h.cancel;
     };
     refresh();
@@ -1363,8 +1363,7 @@
       el('h2', { class: 'chalk-title modal-title' }, 'Model & runtime'),
       row('provider', c.provider), row('model', c.model), row('endpoint', c.baseURL), row('.env file', c.envFile || 'not found, using defaults'),
       row('python', c.python), row('packages', c.packages),
-      c.diagram ? row('diagrams', `${c.diagram.provider} · ${c.diagram.model}`) : null,
-      ((c.diagram && c.diagram.problems) || []).length ? el('div', { class: 'cfg-problems' }, c.diagram.problems.map((p) => el('div', {}, '◇ ' + p))) : null,
+      row('diagrams', 'drawn by the same model'),
       (c.problems || []).length ? el('div', { class: 'cfg-problems' }, c.problems.map((p) => el('div', {}, '⚠ ' + p))) : null,
       el('p', { class: 'muted small' }, 'Edit the .env file and click refresh. Keys: LLM_PROVIDER (openrouter | lmstudio), OPENROUTER_API_KEY, OPENROUTER_MODEL, LMSTUDIO_BASE_URL, LMSTUDIO_MODEL. The menu at the top right switches between every model .env names; add more with OPENROUTER_MODELS or LMSTUDIO_MODELS (comma-separated).'),
       el('div', { class: 'modal-actions' },

@@ -13,7 +13,6 @@ from typing import Callable, Optional
 
 DEFAULT_OPENROUTER_MODEL = "anthropic/claude-fable-5.1"
 DEFAULT_LEVELSET_MODEL = "openai/gpt-5.6-sol-pro"
-DEFAULT_DIAGRAM_MODEL = "qwen/qwen3-coder-30b-a3b-instruct"
 
 
 def parse_dotenv(text: str) -> dict[str, str]:
@@ -81,12 +80,10 @@ class PythonSettings:
 class AppConfig:
     llm: LLMSettings
     level_set: LLMSettings
-    diagram: LLMSettings
     python: PythonSettings
     env_file: Optional[Path]
     problems: list[str] = field(default_factory=list)
     level_set_problems: list[str] = field(default_factory=list)
-    diagram_problems: list[str] = field(default_factory=list)
     choices: list[LLMChoice] = field(default_factory=list)  # every model the board can switch to; the first is llm
 
     def choice(self, choice_id: Optional[str]) -> LLMChoice:
@@ -315,32 +312,11 @@ def resolve(values: dict[str, str], env_file: Optional[Path]) -> AppConfig:
     level_set = LLMSettings(ls_provider, _url(ls_base, ls_problems), ls_key, ls_model,
                             _float(get("LEVELSET_TEMPERATURE")), 32000 if ls_max is None else ls_max, ls_extra)
 
-    # Diagrams: OpenRouter + the qwen coder model unless overridden.
-    dg_problems: list[str] = []
-    dg_provider = "openrouter"
-    p = get("DIAGRAM_PROVIDER")
-    if p is not None:
-        parsed = parse_provider(p)
-        if parsed is None:
-            dg_problems.append(f"Unknown DIAGRAM_PROVIDER '{p}', using openrouter")
-        else:
-            dg_provider = parsed
-    dg_base, dg_key, dg_default = _endpoint(dg_provider, get)
-    dg_model = get("DIAGRAM_MODEL") or (DEFAULT_DIAGRAM_MODEL if dg_provider == "openrouter" else dg_default)
-    if dg_provider == "openrouter" and dg_key is None:
-        dg_problems.append(f"OPENROUTER_API_KEY is not set in .env. Diagrams are drawn on OpenRouter ({dg_model}); "
-                           "set DIAGRAM_PROVIDER=lmstudio to draw them locally.")
-    dg_temp = _float(get("DIAGRAM_TEMPERATURE"))
-    dg_max = _int(get("DIAGRAM_MAX_TOKENS"))
-    diagram = LLMSettings(dg_provider, _url(dg_base, dg_problems), dg_key, dg_model,
-                          0.2 if dg_temp is None else dg_temp, 4096 if dg_max is None else dg_max,
-                          _json_object(get("DIAGRAM_EXTRA_BODY"), "DIAGRAM_EXTRA_BODY", dg_problems))
-
     packages = [x for x in (get("PYTHON_PACKAGES") or "numpy sympy scipy matplotlib").replace(",", " ").split() if x]
     interpreter = get("PYTHON_PATH")
     timeout = _float(get("PYTHON_TIMEOUT"))
     python = PythonSettings(os.path.expanduser(interpreter) if interpreter else None, packages,
                             120.0 if timeout is None else timeout)
 
-    return AppConfig(llm=llm, level_set=level_set, diagram=diagram, python=python, env_file=env_file,
-                     problems=problems, level_set_problems=ls_problems, diagram_problems=dg_problems, choices=choices)
+    return AppConfig(llm=llm, level_set=level_set, python=python, env_file=env_file,
+                     problems=problems, level_set_problems=ls_problems, choices=choices)

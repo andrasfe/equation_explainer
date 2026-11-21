@@ -96,9 +96,9 @@ You can also **read a PDF paper** on the board and highlight its passages the sa
     measurements, barriers and labelled stages such as *oracle* and *diffusion*.
   - Architectures, pipelines, feedback loops and logic circuits are drawn as block diagrams, with grouped
     layers and dashed skip connections. Labels can hold math.
-  - The answer only says what to draw. A separate model, `qwen/qwen3-coder-30b-a3b-instruct` on
-    OpenRouter (`DIAGRAM_MODEL`), turns that into the diagram, and the app lays it out. A diagram takes a few
-    seconds and costs a fraction of a cent.
+  - The answer only says what to draw. The same model that wrote it (the one picked in the top bar) then turns
+    that into the diagram in a second request, and the app lays it out. If the reply cannot be drawn, it is asked
+    once more with the reason; **↻** tries again.
   - **◇** under any answer asks for a diagram of it. On a diagram, **⤢** enlarges it, **↻** redraws it (the
     old one stays until the new one is ready) and **✕** erases it. Diagrams are saved with the board.
 - **No code unless you ask.** Answers stick to mathematics. Code appears only when your question asks
@@ -155,7 +155,7 @@ LM Studio once any `LMSTUDIO_*` key is, a custom server once `LLM_BASE_URL` is).
 busy you can send the next one to OpenRouter without waiting. It is remembered across launches. Add more models
 with a named key such as `OPENROUTER_ALT_MODEL` (any `OPENROUTER_<name>_MODEL`, `LMSTUDIO_<name>_MODEL` or
 `LLM_<name>_MODEL`) or with `OPENROUTER_MODELS` / `LMSTUDIO_MODELS` / `LLM_MODELS` (comma-separated). ⓘ beside it opens *Model & runtime*. The level-set
-and diagrams keep their own models. **more models…** at the end of the menu opens the source panel: pick OpenRouter,
+keeps its own model; diagrams are drawn by the model you picked. **more models…** at the end of the menu opens the source panel: pick OpenRouter,
 LM Studio or a custom endpoint and any model the server lists, and **use** writes `LLM_PROVIDER` and the model key
 to `.env` as the new default (API keys and endpoints are still edited in the file).
 
@@ -169,12 +169,10 @@ to `.env` as the new default (API keys and endpoints are still edited in the fil
 | `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_EXTRA_BODY` | generation settings (`LLM_EXTRA_BODY` is JSON merged into the request) |
 | `LEVELSET_MODEL` | model for the level-set, default `openai/gpt-5.6-sol-pro` on OpenRouter (needs `OPENROUTER_API_KEY`) |
 | `LEVELSET_PROVIDER`, `LEVELSET_MAX_TOKENS`, `LEVELSET_EXTRA_BODY` | where the level-set runs (`openrouter` by default, or `lmstudio`) and its request settings |
-| `DIAGRAM_MODEL` | model that draws diagrams, default `qwen/qwen3-coder-30b-a3b-instruct` on OpenRouter (needs `OPENROUTER_API_KEY`; without it, answers come without diagrams) |
-| `DIAGRAM_PROVIDER`, `DIAGRAM_TEMPERATURE`, `DIAGRAM_MAX_TOKENS`, `DIAGRAM_EXTRA_BODY` | where diagrams are drawn (`openrouter` by default, or `lmstudio`) and their request settings |
 | `PYTHON_PATH` | use your own interpreter instead of the managed environment |
 | `PYTHON_PACKAGES`, `PYTHON_TIMEOUT` | packages for the managed environment, and the per-run time limit in seconds |
 
-To run everything on OpenRouter (explanations, summaries, the level-set and diagrams), set
+To run everything on OpenRouter (explanations, summaries, diagrams and the level-set), set
 `LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY`; the board summary is written by the board's model.
 
 ### Where things live

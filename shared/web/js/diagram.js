@@ -1,8 +1,8 @@
 /* Diagrams for circuits and architectures.
  *
  * The explanation model marks the spot where a picture helps with a line
- * "[[diagram: what to draw]]". A separate model (DIAGRAM_MODEL, OpenRouter by
- * default) turns that request into a small JSON spec, and this module lays the
+ * "[[diagram: what to draw]]". A second request to the same model (the one picked
+ * in the top bar) turns that into a small JSON spec, and this module lays the
  * spec out and draws it in chalk: circuits on wires (quantum or classical
  * gates), or graphs of components and how data flows between them (dagre).
  */

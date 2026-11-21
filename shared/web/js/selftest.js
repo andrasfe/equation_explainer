@@ -503,7 +503,7 @@ EE.selfTest = async function selfTest(opts = {}) {
   });
 
   await step('diagrams: a circuit answer gets its circuit drawn, ◇ adds one, both are saved', async () => {
-    if (!app.diagramsOn()) return { skipped: ((S.config.diagram || {}).problems || ['no diagram model'])[0] };
+    if (!app.diagramsOn()) return { skipped: (S.config.problems || ['the model is not set up'])[0] };
     const dgIdle = () => waitFor(() => S.dgJobs.size === 0, 5 * 60 * 1000, 'the diagram model');
     app.closeAll();
     const card = app.send('root', String.raw`Draw the quantum circuit that prepares the Bell state $\ket{\Phi^+}$ from $\ket{00}$, and explain what each gate does.`, 'explain');

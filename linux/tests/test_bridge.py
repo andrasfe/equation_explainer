@@ -90,7 +90,7 @@ def model_server():
 @pytest.fixture
 def model(tmp_path, model_server, monkeypatch):
     env = tmp_path / "test.env"
-    env.write_text(f"LLM_PROVIDER=custom\nLLM_BASE_URL={model_server}\nLEVELSET_PROVIDER=custom\nDIAGRAM_PROVIDER=custom\n"
+    env.write_text(f"LLM_PROVIDER=custom\nLLM_BASE_URL={model_server}\nLEVELSET_PROVIDER=custom\n"
                    f"PYTHON_PATH={sys.executable}\nPYTHON_PACKAGES=\n")
     monkeypatch.setenv("EE_ENV_FILE", str(env))
     support = tmp_path / "data"
@@ -117,7 +117,7 @@ def test_ready_config_and_storage_commands(model):
 
     cfg = model.handle("config", {})
     assert cfg["provider"] == "Custom" and cfg["model"] == "stub-model" and cfg["problems"] == []
-    assert cfg["levelset"]["problems"] == [] and cfg["diagram"]["problems"] == []
+    assert cfg["levelset"]["problems"] == [] and "diagram" not in cfg  # diagrams are drawn by the board's model
     assert cfg["python"] == sys.executable
 
     board = {"id": "b1", "title": "Grover", "createdAt": 1000, "updatedAt": 2000, "threads": {"root": {"cards": []}}}
@@ -152,13 +152,15 @@ def test_deleted_boards_are_not_written_back(model):
 
 
 def test_chat_streams_through_the_bridge(model):
-    model.handle("chat", {"id": "c1", "purpose": "explain", "messages": [{"role": "user", "content": "hi"}]})
-    for _ in range(100):
-        if "c1" in model.web.done:
-            break
-        time.sleep(0.05)
-    assert "".join(model.web.chunks["c1"]) == "**Key idea:** $x$"
-    assert model.web.done["c1"] == {"model": "stub-model", "finish": "stop"}
+    # an explanation and a diagram both go to the model the board uses
+    for cid, purpose in (("c1", "explain"), ("d1", "diagram")):
+        model.handle("chat", {"id": cid, "purpose": purpose, "messages": [{"role": "user", "content": "hi"}]})
+        for _ in range(100):
+            if cid in model.web.done:
+                break
+            time.sleep(0.05)
+        assert "".join(model.web.chunks[cid]) == "**Key idea:** $x$"
+        assert model.web.done[cid] == {"model": "stub-model", "finish": "stop"}
 
 
 def test_chat_cancel_and_missing_key(model, tmp_path, monkeypatch):
@@ -176,7 +178,7 @@ def test_chat_cancel_and_missing_key(model, tmp_path, monkeypatch):
     model.handle("chat", {"id": "c4", "purpose": "levelset", "messages": [{"role": "user", "content": "hi"}]})
     assert "level-set runs on OpenRouter" in model.web.failed["c4"]
     model.handle("chat", {"id": "c5", "purpose": "diagram", "messages": [{"role": "user", "content": "hi"}]})
-    assert "Diagrams are drawn on OpenRouter" in model.web.failed["c5"]
+    assert "OPENROUTER_API_KEY is missing" in model.web.failed["c5"]  # the board's model, like an explanation
 
 
 def test_source_picker_lists_models_and_switches_env(model, tmp_path, monkeypatch):

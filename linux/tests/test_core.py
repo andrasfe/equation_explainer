@@ -90,25 +90,6 @@ def test_level_set_defaults_to_openrouter_sol_pro():
     assert local.level_set_problems == []
 
 
-def test_diagram_model_defaults_to_openrouter_qwen_coder():
-    missing = config.resolve({"LLM_PROVIDER": "lmstudio"}, None)
-    assert missing.diagram.provider == "openrouter"
-    assert missing.diagram.model == "qwen/qwen3-coder-30b-a3b-instruct"
-    assert missing.diagram.temperature == 0.2
-    assert len(missing.diagram_problems) == 1
-    assert missing.problems == []
-
-    ok = config.resolve({"LLM_PROVIDER": "lmstudio", "OPENROUTER_API_KEY": "k", "DIAGRAM_MAX_TOKENS": "2000"}, None)
-    assert ok.diagram_problems == []
-    assert ok.diagram.api_key == "k"
-    assert ok.diagram.max_tokens == 2000
-
-    local = config.resolve({"DIAGRAM_PROVIDER": "lmstudio", "LMSTUDIO_MODEL": "gemma", "DIAGRAM_MODEL": "qwen-local"}, None)
-    assert local.diagram.provider == "lmstudio"
-    assert local.diagram.model == "qwen-local"
-    assert local.diagram_problems == []
-
-
 def test_model_choices_list_every_configured_model():
     c = config.resolve({"LLM_PROVIDER": "lmstudio", "LMSTUDIO_MODEL": "gemma", "OPENROUTER_API_KEY": "k",
                         "OPENROUTER_MODEL": "openai/gpt", "OPENROUTER_MODELS": "a/b, openai/gpt c/d",

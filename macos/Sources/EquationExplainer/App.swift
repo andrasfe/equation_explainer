@@ -75,6 +75,13 @@ struct BoardCommands: Commands {
             Button("Recap") { model.web.command("recap") }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             Divider()
+            Button("Read the Paper Paragraph by Paragraph") { model.web.command("reader") }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+            Button("Next Paragraph") { model.web.command("readerNext") }
+                .keyboardShortcut("]", modifiers: [.command, .option])
+            Button("Previous Paragraph") { model.web.command("readerPrev") }
+                .keyboardShortcut("[", modifiers: [.command, .option])
+            Divider()
             Button("Insert Matrix…") { model.web.command("insertMatrix") }
                 .keyboardShortcut("m", modifiers: [.command, .option])
             Button("Write on the Board") { model.web.command("focus") }

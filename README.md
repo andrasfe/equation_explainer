@@ -29,6 +29,19 @@ You can also **read a PDF paper** on the board and highlight its passages the sa
   - The PDF is copied into the Boards folder (`Boards/papers`), so the board keeps working if the original moves.
     Opening the same file again goes back to its board. The board summary covers the side questions about the paper.
   - Rendering is Mozilla's pdf.js.
+- **Read a paper paragraph by paragraph.** **¶ read** (⇧⌘P), above or under the paper, starts a guided reading.
+  - The model takes one paragraph at a time. It opens to the right and explains the paragraph in more detail and
+    in easier terms: the point first, then each idea unpacked (symbols defined, skipped steps filled in, formulas
+    written out properly), and how it follows from what came before.
+  - Ask about the paragraph in that column for as long as you like, then **next paragraph →** (⌥⌘]) moves on.
+    **← previous** (⌥⌘[) goes back. A paragraph already read opens as it was, without asking again.
+  - The paragraph being read is bracketed on the page; those already read keep a faint wash. Highlighting a
+    passage offers *read on from here*.
+  - Paragraphs are found from the layout of the PDF's text: blank space, indented first lines, short last lines
+    and changes of type size. Headings join the paragraph they open, formulas stay with their paragraph, and
+    running heads and page numbers are left out.
+  - The place you got to is saved with the board. Each paragraph read counts as a side question, so the summary,
+    the lessons learned and the recap include them.
 - **Real math.** KaTeX renders LaTeX, matrices (`pmatrix`, `bmatrix`, …) and Dirac notation
   (`\ket`, `\bra`, `\braket`). The **▦ matrix** helper builds matrices with presets (I, X, Y, Z, H, S, T, CNOT).
 - **It learns where you stand.**
@@ -192,6 +205,7 @@ macOS uses ⌘, Linux uses Ctrl; the tooltips in the app show the right one.
 | level-set now / where you stand and my notes | `⇧⌘L` / `⌥⌘L` | `Ctrl+Shift+L` / `Ctrl+Alt+L` |
 | new board / write on the board | `⌘N` / `⌘L` | `Ctrl+N` / `Ctrl+L` |
 | read a PDF paper | `⌘O` (or drop a PDF on the board) | `Ctrl+O` |
+| read it paragraph by paragraph / next / previous paragraph | `⇧⌘P` / `⌥⌘]` / `⌥⌘[` | `Ctrl+Shift+P` / `Ctrl+Alt+]` / `Ctrl+Alt+[` |
 | zoom in / out / actual size | `⌘=` / `⌘−` / `⌘0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | write / new line | `Enter` / `Shift+Enter` (`⌘Enter` runs in python mode, saves a note) | same with `Ctrl+Enter` |
 
@@ -201,7 +215,7 @@ macOS uses ⌘, Linux uses Ctrl; the tooltips in the app show the right one.
 make test       # unit tests for this OS: Swift (macOS) or pytest (Linux): config, SSE parsing, streaming, storage, python runner
 make dev        # same UI in a browser at http://127.0.0.1:5178 with a Node bridge
 make selftest   # drives the real app end to end against your LLM and saves snapshots to /tmp/ee-selftest
-                # (it reads a built-in one-page paper; pass --selftest-pdf FILE to the app to use a real one)
+                # (it reads built-in test papers; pass --selftest-pdf FILE to the app to use a real one)
 make help       # every target, including the explicit mac-* and linux-* ones
 ```
 

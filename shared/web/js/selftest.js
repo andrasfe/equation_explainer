@@ -2,7 +2,7 @@
  * exercises the same code paths a person would: prompt → highlight → side
  * question → drill deeper → run Python → compute mode → close back to the
  * original → reload from disk → reopen a branch → summarize the board →
- * draw a circuit diagram → read a PDF paper and ask about a highlighted passage.
+ * draw a circuit diagram → read a PDF paper and ask about a highlighted passage → read it paragraph by paragraph.
  * opts.prompt replaces the first question; opts.pdf (a path) replaces the built-in one-page paper.
  */
 EE.selfTest = async function selfTest(opts = {}) {
@@ -86,18 +86,19 @@ EE.selfTest = async function selfTest(opts = {}) {
   };
 
   /** A one-page PDF built here (Helvetica, not embedded), so the test needs no fixture file. */
-  function tinyPdf() {
+  /** A PDF (base64) of Helvetica text: pages = [[{size, x, y, text}]]. */
+  function makePdf(pages) {
     const esc = (t) => t.replace(/[\\()]/g, (m) => '\\' + m);
-    const body = ['Phase kickback is the step that makes most quantum algorithms work.',
-      'When a controlled-U acts on a control in superposition and a target in an eigenstate of U,',
-      'the eigenvalue of the target becomes a relative phase on the control register.',
-      'Hence the target is left unchanged while the control picks up the phase e^(2 pi i phi).'];
-    const content = 'BT /F1 22 Tf 72 700 Td (Phase kickback in one page) Tj ET BT /F1 12 Tf 72 660 Td 18 TL ' +
-      body.map((l) => `(${esc(l)}) '`).join(' ') + ' ET';
-    const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
-      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
-      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`];
+    const n = pages.length;
+    const kids = pages.map((_, i) => `${5 + 2 * i} 0 R`).join(' ');
+    const objs = ['<< /Type /Catalog /Pages 2 0 R >>', `<< /Type /Pages /Kids [${kids}] /Count ${n} >>`, '',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'];
+    objs[2] = '<< >>'; // unused slot, keeps the numbering simple
+    pages.forEach((lines, i) => {
+      const content = lines.map((l) => `BT /F1 ${l.size} Tf ${l.x} ${l.y} Td (${esc(l.text)}) Tj ET`).join('\n');
+      objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents ${6 + 2 * i} 0 R >>`,
+        `<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+    });
     let out = '%PDF-1.4\n';
     const offs = [];
     objs.forEach((o, i) => { offs.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
@@ -105,6 +106,52 @@ EE.selfTest = async function selfTest(opts = {}) {
     out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map((o) => String(o).padStart(10, '0') + ' 00000 n \n').join('') +
       `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
     return btoa(out);
+  }
+
+  function tinyPdf() {
+    const body = ['Phase kickback is the step that makes most quantum algorithms work.',
+      'When a controlled-U acts on a control in superposition and a target in an eigenstate of U,',
+      'the eigenvalue of the target becomes a relative phase on the control register.',
+      'Hence the target is left unchanged while the control picks up the phase e^(2 pi i phi).'];
+    return makePdf([[{ size: 22, x: 72, y: 700, text: 'Phase kickback in one page' },
+      ...body.map((text, i) => ({ size: 12, x: 72, y: 660 - 18 * (i + 1), text }))]]);
+  }
+
+  /** Two pages, a heading and two paragraphs each (a blank line between paragraphs), for the paragraph reader. */
+  function readerPdf() {
+    // (sentences end only where the paragraphs do, so nothing but the blank lines splits them)
+    const paras = [
+      ['1 Phase kickback', [
+        'A controlled-U gate applies U to the target only when the control qubit is one, and',
+        'if the target already holds an eigenvector of U with eigenvalue e^(2 pi i phi),',
+        'applying U only multiplies the target by that phase and leaves it unchanged, so the',
+        'phase is a global factor of the branch in which the control qubit is one.']],
+      [null, [
+        'With the control in the superposition (|0> + |1>)/sqrt 2, that global factor becomes',
+        'a relative phase between the two branches, so the control ends up in the state',
+        '(|0> + e^(2 pi i phi)|1>)/sqrt 2 while the target is exactly as it was before; this',
+        'is why the phase is said to be kicked back onto the control register.']],
+      ['2 Why it matters', [
+        'Phase estimation repeats this with controlled powers of U on several control qubits,',
+        'writing the binary digits of phi into their relative phases one qubit at a time;',
+        'an inverse quantum Fourier transform then turns those phases into a register that',
+        'can be measured to read off an approximation of phi with high probability.']],
+      [null, [
+        'The same mechanism drives Shor factoring, where U multiplies by a number modulo N',
+        'and the eigenvalue phases encode the period of that modular multiplication, and',
+        'Grover search uses it too, since the oracle flips the phase of the marked state and the',
+        'diffusion step turns that phase difference into a larger measured amplitude.']],
+    ];
+    const pages = [[], []];
+    let page = 0, y = 700;
+    paras.forEach(([head, lines], k) => {
+      if (k === 2) { page = 1; y = 700; }
+      if (k === 0) { pages[0].push({ size: 20, x: 72, y, text: 'Kickback, read slowly' }); y -= 44; }
+      if (head) { pages[page].push({ size: 14, x: 72, y, text: head }); y -= 26; }
+      lines.forEach((text) => { pages[page].push({ size: 12, x: 72, y, text }); y -= 15; });
+      y -= 22; // the blank line between paragraphs
+    });
+    return makePdf(pages);
   }
 
   await log('self test starting');
@@ -542,6 +589,69 @@ EE.selfTest = async function selfTest(opts = {}) {
     const served = await fetch('papers/' + r.file);
     assert(served.ok, 'the PDF is not served from the boards folder');
     return { file: r.file, title: board.title, pages: board.pdf.pages, quote: anchor.quote.slice(0, 60), answer: len, systemChars: sys.length };
+  });
+
+  await step('paper reader: one paragraph at a time, explained, a question on it, then the next', async () => {
+    app.closeAll();
+    const r = opts.pdf ? await B.call('importPdf', { path: opts.pdf }) : await B.call('importPdf', { data: readerPdf(), name: 'selftest-reader.pdf' });
+    const board = app.openPaper(r);
+    await waitFor(() => document.querySelector('.pdf-page[data-page="1"] .textLayer span'), 60000, 'the paper to render');
+    const ps = await EE.pdf.paragraphs(r.file);
+    if (!opts.pdf) {
+      assert(ps.length === 4, `the test paper has 4 paragraphs, found ${ps.length}: ` + JSON.stringify(ps.map((p) => p.text.slice(0, 40))));
+      assert(ps[0].text.startsWith('Kickback, read slowly 1 Phase kickback A controlled-U') && ps[2].page === 2 && ps[3].head === '2 Why it matters',
+        'the paragraphs are not the printed ones: ' + JSON.stringify(ps.map((p) => [p.page, p.head, p.text.slice(0, 50)])));
+    } else assert(ps.length >= 2, 'no paragraphs found in the paper');
+    const start = document.querySelector('.paper-bar [data-act="reader-start"]');
+    assert(start, 'no "read it with me" button under the paper');
+    const before = sent.length;
+    start.click();
+    await waitFor(() => sent.length > before, 20000, 'the first paragraph to be sent');
+    const tid = board.openPath[1];
+    const t = board.threads[tid];
+    assert(t && t.anchor.para != null && t.anchor.cardId === 'pdf:' + ps[t.anchor.para].page && board.reader.at === t.anchor.para, 'no thread on the paragraph');
+    const first = sent[sent.length - 1].messages;
+    assert(first[0].content.includes('one paragraph at a time'), 'the prompt does not say the paper is read paragraph by paragraph');
+    assert(first[first.length - 1].content.includes(`Paragraph ${t.anchor.para + 1} of ${ps.length}`) &&
+      first[first.length - 1].content.includes(ps[t.anchor.para].text.slice(0, 60)), 'the paragraph is not in the question');
+    await idle();
+    const len1 = answerOk(lastCard(tid));
+    await waitFor(() => document.querySelector('#overlay .chalk-loop'), 5000, 'the chalk bracket by the paragraph');
+    const hl = (name) => (window.CSS && CSS.highlights && CSS.highlights.get(name) ? CSS.highlights.get(name).size : null); // null: no highlight API
+    assert(hl('ee-anchor-active') !== 0, 'the paragraph is not highlighted on the paper');
+    // a question about it, in the same column
+    app.send(tid, 'Why is the phase global for the target but relative for the control?', 'explain');
+    await idle();
+    answerOk(lastCard(tid));
+    const follow = sent[sent.length - 1].messages;
+    assert(follow[0].content.includes('one paragraph at a time') && follow.some((m) => m.role === 'user' && m.content.includes(ps[t.anchor.para].text.slice(0, 60))),
+      'the follow-up lost the paragraph');
+    await settle();
+    await snap('13-reader');
+    // the next paragraph: a new column, knowing what came before; the first one stays as it was
+    const nav = () => document.querySelector(`.column[data-thread="${board.openPath[1]}"] .reader-nav`);
+    nav().querySelector('[data-act="reader-next"]').click();
+    await waitFor(() => board.openPath[1] && board.openPath[1] !== tid, 20000, 'the next paragraph');
+    const tid2 = board.openPath[1];
+    assert(board.threads[tid2].anchor.para === t.anchor.para + 1 && board.reader.at === t.anchor.para + 1, 'not the next paragraph');
+    const second = sent[sent.length - 1].messages;
+    assert(second[second.length - 1].content.includes('The paragraph before it'), 'the next paragraph does not know the one before');
+    await idle();
+    const len2 = answerOk(lastCard(tid2));
+    assert(hl('ee-read') !== 0, 'the paragraph read before is not marked on the paper');
+    // back: the paragraph already read opens as it is, nothing is asked again
+    const asked = sent.length;
+    nav().querySelector('[data-act="reader-prev"]').click();
+    await waitFor(() => board.openPath[1] === tid, 10000, 'the previous paragraph');
+    await sleep(500);
+    assert(sent.length === asked && board.threads[tid].cards.length === 4, 'going back asked the model again');
+    await sleep(1200); // let the save land
+    const disk = JSON.parse((await B.call('selftest', { event: 'reload', id: board.id })).board);
+    assert(disk.reader && disk.reader.at === t.anchor.para && disk.threads[tid2] && disk.threads[tid2].anchor.para === t.anchor.para + 1,
+      'the reading was not saved with the board');
+    const tr = EE.model.boardTranscript(board, app.paperOf(board)).lines.join('\n');
+    assert(tr.includes('read together'), 'the summary does not know these paragraphs were read together');
+    return { paragraphs: ps.length, first: len1, second: len2, at: board.reader.at };
   });
 
   await step('level-set button folds new ratings into the profile', async () => {

@@ -850,6 +850,7 @@ CSS = """
 SHORTCUTS = [  # (accelerator, app action)
     ("<Control>n", "new-board"), ("<Control>o", "open-pdf"), ("<Control>bracketleft", "close-last"), ("<Control><Shift>BackSpace", "close-all"),
     ("<Control><Shift>m", "map"), ("<Control><Shift>s", "summary"), ("<Control><Shift>k", "lessons"), ("<Control><Shift>r", "recap"),
+    ("<Control><Shift>p", "reader"), ("<Control><Alt>bracketright", "reader-next"), ("<Control><Alt>bracketleft", "reader-prev"),
     ("<Control><Alt>m", "matrix"), ("<Control>l", "focus"),
     ("<Control><Shift>l", "levelset"), ("<Control><Alt>l", "profile"), ("<Control>equal", "zoom-in"), ("<Control>plus", "zoom-in"),
     ("<Control>minus", "zoom-out"), ("<Control>0", "zoom-reset"), ("<Control>q", "quit"), ("<Control>w", "quit"),
@@ -1106,6 +1107,7 @@ class EEApplication(Adw.Application):
             [("New Board", "new-board"), ("Open PDF Paper…", "open-pdf")],
             [("Close Side Question", "close-last"), ("Back to the Original", "close-all"), ("Board Map", "map"), ("Board Summary", "summary"),
              ("Lessons Learned", "lessons"), ("Recap", "recap")],
+            [("Read the Paper Paragraph by Paragraph", "reader"), ("Next Paragraph", "reader-next"), ("Previous Paragraph", "reader-prev")],
             [("Insert Matrix…", "matrix"), ("Write on the Board", "focus")],
             [("Level-Set Now", "levelset"), ("Where I Stand & My Notes", "profile")],
             [("Model & Runtime…", "config"), ("Open .env", "open-env"), ("Reveal Boards Folder", "reveal-boards")],
@@ -1137,7 +1139,7 @@ class EEApplication(Adw.Application):
         for name, page in (("close-last", "closeLast"), ("close-all", "closeAll"), ("map", "toggleMap"), ("summary", "summary"),
                            ("matrix", "insertMatrix"), ("focus", "focus"), ("levelset", "levelset"), ("profile", "profile"),
                            ("config", "config"), ("open-pdf", "openPdf"), ("lessons", "lessons"),
-                           ("recap", "recap")):
+                           ("recap", "recap"), ("reader", "reader"), ("reader-next", "readerNext"), ("reader-prev", "readerPrev")):
             act(name, cmd(page))
         act("open-env", lambda: m() and m().open_env())
         act("reveal-boards", lambda: m() and m().reveal_boards_folder())

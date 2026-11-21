@@ -50,6 +50,15 @@ The student highlighted a passage of the paper and is asking about exactly that 
 
 The student is asking about the paper as a whole. Answer from the paper's text below, and point to the pages or sections you draw on.`;
 
+  const PAPER_READ = String.raw`
+
+The student is reading the paper with you one paragraph at a time; this is the paragraph you are on. Explain it in more detail and in easier terms than the paper does:
+1. Start with its point, in one or two plain sentences.
+2. Then go through it idea by idea: unpack the jargon, define every symbol, fill in the steps the authors skip, write any formula properly in LaTeX and say what it means, and add a small example or an intuition where it helps.
+3. Say briefly how it follows from what came before and why it is there.
+The paragraph's text comes from the PDF, so symbols may be missing or garbled; restore them from the context and the page without remarking on it.
+Stay with this paragraph. The next one comes when the student moves on, so do not explain what follows it. If it is only a heading, a caption, a list of references or a stray formula, say so in a line or two. Afterwards the student may ask about it; answer those questions, still about this paragraph.`;
+
   /** Page number of a paper anchor ("pdf:3" -> 3); null for the whole paper or an answer. */
   const pageOf = (cardId) => { const m = /^pdf:(\d+)$/.exec(cardId || ''); return m ? Number(m[1]) : null; };
   const isPaperAnchor = (a) => !!a && /^pdf(:|$)/.test(a.cardId || '');
@@ -331,7 +340,8 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
       if (card.role === 'user') {
         const q = byCard.get(card.id);
         const pg = t.anchor && pageOf(t.anchor.cardId);
-        const what = q.side && isPaperAnchor(t.anchor) ? (pg ? `question about a passage of the paper (p. ${pg}): "${truncate(clean(t.anchor.quote || ''), 160)}"` : 'question about the whole paper')
+        const what = q.side && isPaperAnchor(t.anchor) && t.anchor.para != null ? `paragraph ${t.anchor.para + 1} of the paper, read together (p. ${pg}): "${truncate(clean(t.anchor.quote || ''), 160)}"`
+          : q.side && isPaperAnchor(t.anchor) ? (pg ? `question about a passage of the paper (p. ${pg}): "${truncate(clean(t.anchor.quote || ''), 160)}"` : 'question about the whole paper')
           : q.side ? `side question about "${truncate(clean((t.anchor && (t.anchor.llmText || t.anchor.quote)) || ''), 160)}"`
           : !t.parentId && k === 0 ? 'main question' : 'follow-up';
         lines.push(`${pad}[${q.tag}] ${what}: ${truncate(card.text, 600)}`);
@@ -432,6 +442,7 @@ Be concise: a high-level reference the student can review in a few minutes. No p
           key: c.id, q: c.text, side, answer: body, at: c.createdAt || 0,
           quote: side && t.anchor ? (isPaperAnchor(t.anchor) && !pageOf(t.anchor.cardId) ? 'the whole paper' : t.anchor.quote || '') : '',
           page: side && t.anchor ? pageOf(t.anchor.cardId) : null,
+          para: side && t.anchor && t.anchor.para != null ? t.anchor.para : null,
         });
       });
     }
@@ -463,6 +474,7 @@ Be concise: a high-level reference the student can review in a few minutes. No p
     const lines = [];
     for (const it of batch) {
       const what = !it.side ? 'question'
+        : it.para != null ? `paragraph ${it.para + 1} of the paper, read together (p. ${it.page}): "${truncate(clean(it.quote), 160)}"`
         : it.page ? `question about a passage of the paper (p. ${it.page}): "${truncate(clean(it.quote), 160)}"`
         : `side question about "${truncate(clean(it.quote), 160)}"`;
       lines.push(`- ${what}: ${truncate(it.q, 600)}`, `  answer: ${condense(it.answer, cap)}`);
@@ -554,6 +566,11 @@ Be concise: a high-level reference the student can review in a few minutes. No p
     if (isPaperAnchor(anchor)) {
       const n = pageOf(anchor.cardId);
       if (!n) return 'Question about the whole paper:\n\n';
+      if (anchor.para != null) {
+        let r = `Paragraph ${anchor.para + 1}${anchor.of ? ` of ${anchor.of}` : ''} of the paper (page ${n}${anchor.head ? `, under "${anchor.head}"` : ''}):\n> ${anchor.llmText.replace(/\n/g, '\n> ')}\n`;
+        if (anchor.before) r += `\n(The paragraph before it, which we have read: "${anchor.before}")\n`;
+        return r + '\n';
+      }
       let p = `Question about this passage of the paper (page ${n}):\n> ${anchor.llmText.replace(/\n/g, '\n> ')}\n`;
       if (anchor.context) p += `\n(Surrounding text on the page: "${anchor.context}")\n`;
       return p + '\n';
@@ -631,7 +648,7 @@ Be concise: a high-level reference the student can review in a few minutes. No p
     // on a paper, the side question at the first level is about a passage (or the whole paper); deeper ones about an answer
     const paperAnchor = opts.paper && path.length > 1 ? board.threads[path[1]].anchor : null;
     const own = board.threads[threadId].anchor;
-    const branch = path.length < 2 ? '' : !isPaperAnchor(own) ? BRANCH : pageOf(own.cardId) ? PAPER_BRANCH : PAPER_WHOLE;
+    const branch = path.length < 2 ? '' : !isPaperAnchor(own) ? BRANCH : own.para != null ? PAPER_READ : pageOf(own.cardId) ? PAPER_BRANCH : PAPER_WHOLE;
     const system = SYSTEM + (opts.diagrams && mode !== 'compute' ? EE.diagram.RULE : '') + learnerSection(learner) +
       (opts.paper ? paperSection(opts.paper, paperAnchor) : '') +
       branch + (code ? CODE : '') + (mode === 'compute' ? COMPUTE : '');
@@ -640,7 +657,7 @@ Be concise: a high-level reference the student can review in a few minutes. No p
 
   return {
     newBoard, newThread, pathTo, children, descendants, branchesOn, findCard, countBranches, pageOf, isPaperAnchor, paperSection,
-    buildMessages, SYSTEM, wantsCode, repairJson, recapRule, learnerSection, notesLines, evidence, evidenceHash, levelSetMessages, parseProfile,
+    buildMessages, SYSTEM, PAPER_READ, wantsCode, repairJson, recapRule, learnerSection, notesLines, evidence, evidenceHash, levelSetMessages, parseProfile,
     SUMMARY_SYSTEM, boardQuestions, boardTranscript, summaryMessages, RECAP_SYSTEM, recapMessages, LESSONS_SYSTEM, lessonItems, newLessonItems, lessonBatch, lessonsMessages,
   };
 })();

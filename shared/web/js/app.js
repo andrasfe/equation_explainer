@@ -51,6 +51,7 @@
     { q: 'Why is this true?', mode: 'explain' },
     { q: 'Give a concrete numerical example.', mode: 'explain' },
     { q: 'How does this fit into the rest of the paper?', mode: 'explain' },
+    { q: '¶ Read on from here, paragraph by paragraph', read: true },
   ];
   const CHIPS = [
     { q: 'How did you get to this?', mode: 'explain' },
@@ -615,6 +616,7 @@
           el('button', { class: 'col-title chalk-title', 'data-act': 'rename-board', title: `Rename board (${b.pdf.name})` }, EE.util.texToText(b.title) || b.pdf.name),
           el('span', { class: 'spacer' }),
           el('span', { class: 'col-meta' }, meta),
+          el('button', { class: 'icon-btn paper-read', 'data-act': 'reader-start', title: kbd('Read the paper with me, one paragraph at a time (⇧⌘P)') }, '¶ read'),
           el('button', { class: 'icon-btn paper-look', 'data-act': 'paper-look', title: S.paperLook === 'chalk' ? 'Show the paper as printed, black on white' : 'Chalk it onto the slate' },
             S.paperLook === 'chalk' ? '☐ paper' : '▨ chalk'));
         c.tag = null;
@@ -626,7 +628,7 @@
         c.tag = null;
       } else {
         c.tag = el('div', { class: 'branch-tag', title: thread.anchor ? clean(thread.anchor.quote) : '' },
-          el('span', { class: 'tag-arrow' }, '↳'),
+          el('span', { class: 'tag-arrow' }, isReadThread(thread) ? '¶ ' + (thread.anchor.para + 1) : '↳'),
           el('span', { class: 'tag-quote' }, '“' + truncate(clean(thread.anchor ? thread.anchor.quote : ''), 60) + '”'));
         c.head.append(
           c.tag,
@@ -883,8 +885,9 @@
     const send = el('button', { class: 'send-btn', title: 'Write it on the board' }, 'write ↵');
     const matrix = el('button', { class: 'tool-btn', title: kbd('Insert a matrix (⌥⌘M)') }, '▦ matrix');
     const hint = el('span', { class: 'hint' });
+    const nav = el('div', { class: 'reader-row reader-nav', hidden: true });
     const root = el('div', { class: 'composer' + (isRoot ? ' composer-root' : '') },
-      preview, ta, el('div', { class: 'composer-bar' }, el('div', { class: 'modes' }, modeBtns), matrix, hint, el('span', { class: 'spacer' }), send));
+      nav, preview, ta, el('div', { class: 'composer-bar' }, el('div', { class: 'modes' }, modeBtns), matrix, hint, el('span', { class: 'spacer' }), send));
 
     const mode = () => S.modes.get(threadId) || 'explain';
     const autosize = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 260) + 'px'; };
@@ -904,7 +907,9 @@
         ? "from boardkit import *\nshow(kron(H, H) * ket('00'), label=r'(H\\otimes H)\\ket{00}')"
         : m === 'compute'
           ? 'Type a matrix or an expression to compute, e.g. (H⊗H)·CNOT·(H⊗H)'
-          : isRoot ? 'Write an equation or a question…' : 'Follow up on this side question…';
+          : isRoot ? 'Write an equation or a question…'
+            : isReadThread(S.board.threads[threadId]) ? 'Ask about this paragraph…' : 'Follow up on this side question…';
+      readerNav(nav, threadId);
       hint.textContent = m === 'python' ? kbd('⌘ + enter runs it') : 'enter writes · shift + enter for a new line';
     }
     function submit() {
@@ -998,19 +1003,20 @@
   function applyHighlights() {
     if (!(window.CSS && CSS.highlights && window.Highlight)) return;
     const b = S.board;
-    const idle = [], active = [];
+    const idle = [], active = [], read = [];
     for (const c of cols.values()) {
       for (const [cardId, ce] of anchorables(c)) {
         const body = ce.querySelector(BODY);
         if (!body) continue;
         for (const t of M.branchesOn(b, cardId)) {
           const r = A.rangeFor(body, t.anchor);
-          if (r) (b.openPath.includes(t.id) ? active : idle).push(r);
+          if (r) (b.openPath.includes(t.id) ? active : t.anchor.para != null ? read : idle).push(r);
         }
       }
     }
     CSS.highlights.set('ee-anchor', new Highlight(...idle));
     CSS.highlights.set('ee-anchor-active', new Highlight(...active));
+    CSS.highlights.set('ee-read', new Highlight(...read));
   }
 
   /** Elements that can hold anchors in a column: its cards, plus the pages of a paper. */
@@ -1042,6 +1048,20 @@
         const mx = (pts[k][0] + pts[k + 1][0]) / 2, my = (pts[k][1] + pts[k + 1][1]) / 2;
         d += `Q${pts[k][0].toFixed(1)},${pts[k][1].toFixed(1)} ${mx.toFixed(1)},${my.toFixed(1)}`;
       }
+    }
+    return d;
+  }
+
+  /** A chalk bracket down the left margin of a paragraph (the one being read). */
+  function roughBracket(x, top, bot, seed) {
+    const rnd = rng(seed ^ 0x51ed27);
+    const j = () => (rnd() - 0.5) * 2.2;
+    const f = (n) => n.toFixed(1);
+    let d = '';
+    for (let pass = 0; pass < 2; pass++) {
+      const o = pass * 1.4;
+      d += `M${f(x + 7 + j())},${f(top + j())} Q${f(x + o)},${f(top + o)} ${f(x + o + j())},${f(top + 9)}` +
+        ` L${f(x + o + j())},${f(bot - 9)} Q${f(x + o)},${f(bot - o)} ${f(x + 7 + j())},${f(bot + j())}`;
     }
     return d;
   }
@@ -1098,7 +1118,11 @@
         const cx = (l + r) / 2 - st.left, cy = (top + bot) / 2 - st.top;
         const rx = (r - l) / 2 + 10, ry = (bot - top) / 2 + 8;
         const visible = bot > vis.top && top < vis.bottom;
-        if (visible) {
+        if (visible && t.anchor.para != null) {
+          svg += `<g clip-path="url(#${clipId})"><path class="chalk-loop" d="${roughBracket(l - st.left - 7, top - st.top - 3, bot - st.top + 3, seed)}"/></g>`;
+          sx = r - st.left + 6;
+          sy = Math.min(Math.max(cy, vis.top - st.top + 6), vis.bottom - st.top - 6);
+        } else if (visible) {
           svg += `<g clip-path="url(#${clipId})"><path class="chalk-loop" d="${roughLoop(cx, cy, rx, ry, seed)}"/></g>`;
           sx = cx + rx;
           sy = Math.min(Math.max(cy, vis.top - st.top + 6), vis.bottom - st.top - 6);
@@ -1141,7 +1165,8 @@
     const chips = isPaperCard(anchor.cardId) ? PAPER_CHIPS : CHIPS;
     if (dom.popChips._set !== chips) {
       dom.popChips._set = chips;
-      dom.popChips.replaceChildren(...chips.map((c) => el('button', { class: 'chip' + (c.mode === 'compute' ? ' compute' : ''), onclick: () => submitPopover(c.q, c.mode) }, c.q)));
+      dom.popChips.replaceChildren(...chips.map((c) => el('button', { class: 'chip' + (c.mode === 'compute' ? ' compute' : '') + (c.read ? ' read' : ''),
+        onclick: () => (c.read ? readFrom(S.pending && S.pending.anchor) : submitPopover(c.q, c.mode)) }, c.q)));
     }
     if (window.CSS && CSS.highlights && window.Highlight) CSS.highlights.set('ee-pending', new Highlight(range));
     dom.popQuote.textContent = '“' + truncate(clean(anchor.quote), 140) + '”';
@@ -1185,7 +1210,9 @@
     const body = elOf(pos.startContainer) && elOf(pos.startContainer).closest(BODY);
     if (!body) return null;
     const cardId = body.closest('[data-card]').dataset.card;
-    for (const t of M.branchesOn(S.board, cardId)) {
+    // a passage highlighted inside a paragraph being read wins over the paragraph
+    const ts = M.branchesOn(S.board, cardId).sort((a, b) => (a.anchor.para != null) - (b.anchor.para != null));
+    for (const t of ts) {
       const r = A.rangeFor(body, t.anchor);
       if (r && r.isPointInRange(pos.startContainer, pos.startOffset)) return t.id;
     }
@@ -2305,8 +2332,9 @@
     const box = r && r.getBoundingClientRect();
     const hr = c.body.getBoundingClientRect();
     if (box && box.height) {
+      const para = t.anchor.para != null;
       if (box.top < hr.top + 10 || box.bottom > hr.bottom - 10) {
-        c.body.scrollBy({ top: box.top - hr.top - hr.height / 3, behavior: smooth ? 'smooth' : 'auto' });
+        c.body.scrollBy({ top: box.top - hr.top - (para ? Math.min(60, hr.height / 6) : hr.height / 3), behavior: smooth ? 'smooth' : 'auto' });
       }
     } else {
       c.pdf.scrollToPage(n, 0, smooth);
@@ -2319,7 +2347,9 @@
   function buildPaperBar() {
     const input = el('input', { class: 'chalk-input paper-ask', placeholder: 'Ask about the whole paper…', autocomplete: 'off', spellcheck: 'false' });
     const go = el('button', { class: 'send-btn', title: 'Ask in a new column to the right' }, 'ask ↳');
+    const reading = el('div', { class: 'reader-row' });
     const root = el('div', { class: 'composer paper-bar' },
+      reading,
       el('div', { class: 'paper-hint' }, 'Highlight any passage to ask about it, or ask about the whole paper:'),
       el('div', { class: 'paper-row' }, input, go));
     const submit = () => {
@@ -2333,7 +2363,145 @@
     };
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submit(); } });
     go.addEventListener('click', submit);
-    return { root, ta: input, sync() {}, insert(text) { input.value += text; input.focus(); } };
+    return { root, ta: input, sync() { readerRow(reading); }, insert(text) { input.value += text; input.focus(); } };
+  }
+
+  // ------------------------------------------------------------ reading the paper paragraph by paragraph
+  // Each paragraph read is a side question anchored on that paragraph (anchor.para = its index), so it is circled on
+  // the paper, saved with the board, and part of the summary, the lessons and the recap like any other side question.
+  // board.reader = {at, n} remembers where the reading is.
+  const READ_Q = 'Walk me through this paragraph.';
+  const isReadThread = (t) => !!(t && t.parentId === 'root' && t.anchor && t.anchor.para != null);
+  let readerLoading = null; // file whose paragraphs are being found
+
+  /** The thread that reads paragraph i (by its text, should the paragraphs have been found differently before). */
+  function readerThread(board, p, i) {
+    const ts = Object.values(board.threads).filter(isReadThread);
+    return ts.find((t) => t.anchor.para === i && t.anchor.quote === p.text)
+      || ts.find((t) => t.anchor.cardId === 'pdf:' + p.page && t.anchor.quote === p.text) || null;
+  }
+
+  /** Go to paragraph i: open it if it has been read, else read it (the model explains it in a column to the right). */
+  async function readPara(i) {
+    const b = S.board;
+    if (!b || !b.pdf || readerLoading) return null;
+    let ps;
+    readerLoading = b.pdf.file;
+    render();
+    try {
+      ps = await P.paragraphs(b.pdf.file);
+    } catch (e) {
+      toast('Could not find the paragraphs of this paper: ' + e.message, 'error');
+      return null;
+    } finally {
+      readerLoading = null;
+      if (b === S.board) render();
+    }
+    if (b !== S.board) return null;
+    if (!ps.length) { toast('There is no text in this paper to read (is it a scan?).', 'error'); return null; }
+    if (i >= ps.length) { toast('That was the last paragraph of the paper.'); return null; }
+    i = Math.max(0, i);
+    const p = ps[i];
+    b.reader = { at: i, n: ps.length };
+    let t = readerThread(b, p, i);
+    if (t) {
+      t.anchor.para = i;
+      t.anchor.of = ps.length;
+      openThread(t.id);
+      return t;
+    }
+    const prev = ps[i - 1];
+    const before = prev ? (prev.text.length > 700 ? '…' + prev.text.slice(-700) : prev.text) : '';
+    const anchor = { cardId: 'pdf:' + p.page, start: p.start, end: p.end, quote: p.text, llmText: p.text, partial: [], context: '',
+      page: p.page, para: i, of: ps.length, head: p.head || '', before };
+    t = M.newThread(b, 'root', anchor, `Paragraph ${i + 1}`);
+    t.cards.push({ id: uid('c'), role: 'user', text: READ_Q, mode: 'explain', createdAt: Date.now() });
+    b.openPath = ['root', t.id];
+    hidePopover();
+    getSelection().removeAllRanges();
+    ask(b, t.id, 'explain');
+    requestAnimationFrame(() => { revealColumn(t.id); revealPaperAnchor(t); });
+    return t;
+  }
+
+  /** Start (or pick up) the reading: where it was left, else at the first real paragraph (past the title and authors). */
+  async function readerStart() {
+    const b = S.board;
+    if (!b) return;
+    if (!b.pdf) { toast(kbd('Open a PDF paper first (⌘O); the reader goes through it paragraph by paragraph.')); return; }
+    if (b.reader) { readPara(b.reader.at); return; }
+    let ps = [];
+    try { ps = await P.paragraphs(b.pdf.file); } catch (e) { /* readPara reports it */ }
+    const first = ps.findIndex((p) => p.text.length >= 250 || /^(abstract|summary)\b/i.test(p.text));
+    readPara(Math.max(0, first));
+  }
+
+  /** The next (d = 1) or previous (d = -1) paragraph, from the one open on the right or where the reading is. */
+  function readerStep(d) {
+    const b = S.board;
+    if (!b || !b.pdf) return;
+    const open = b.threads[b.openPath[1]];
+    if (!b.reader && !isReadThread(open)) { readerStart(); return; }
+    const at = isReadThread(open) ? open.anchor.para : b.reader.at;
+    if (at + d < 0) { toast('This is the first paragraph.'); return; }
+    readPara(at + d);
+  }
+
+  /** "Read on from here" on a highlighted passage: the paragraph it is in. */
+  async function readFrom(anchor) {
+    const b = S.board;
+    const n = anchor && M.pageOf(anchor.cardId);
+    if (!b || !b.pdf || !n) return;
+    hidePopover();
+    let ps;
+    try { ps = await P.paragraphs(b.pdf.file); } catch (e) { toast('Could not find the paragraphs of this paper: ' + e.message, 'error'); return; }
+    let i = ps.findIndex((p) => p.page === n && anchor.start < p.end && anchor.end > p.start);
+    if (i < 0) i = ps.findIndex((p) => p.page >= n);
+    if (i < 0) { toast('No paragraph found there.'); return; }
+    readPara(i);
+  }
+
+  /** The reading controls under the paper. */
+  function readerRow(row) {
+    const b = S.board;
+    if (!b || !b.pdf) { row.hidden = true; return; }
+    const r = b.reader;
+    const sig = JSON.stringify([r, readerLoading === b.pdf.file]);
+    if (row._sig === sig) return;
+    row._sig = sig;
+    row.hidden = false;
+    if (readerLoading === b.pdf.file) { row.replaceChildren(el('span', { class: 'chalk-dots muted' }, 'finding the paragraphs')); return; }
+    if (!r) {
+      row.replaceChildren(el('button', { class: 'chalk-btn small primary', 'data-act': 'reader-start', title: kbd('⇧⌘P') }, '¶ read it with me, paragraph by paragraph'));
+      return;
+    }
+    row.replaceChildren(
+      el('button', { class: 'link-btn reader-pos', 'data-act': 'reader-open', title: 'Back to the paragraph you are on' }, `¶ ${r.at + 1} of ${r.n}`),
+      el('span', { class: 'spacer' }),
+      el('button', { class: 'chalk-btn small', 'data-act': 'reader-prev', title: kbd('Previous paragraph (⌥⌘[)') }, '←'),
+      el('button', { class: 'chalk-btn small primary', 'data-act': 'reader-next', title: kbd('Next paragraph (⌥⌘])') }, 'next ¶ →'),
+      el('button', { class: 'icon-btn', 'data-act': 'reader-stop', title: 'Stop reading (the paragraphs read so far stay on the board)' }, '✕'));
+  }
+
+  /** Under a paragraph being read: where it is, and the way on. */
+  function readerNav(nav, threadId) {
+    const b = S.board;
+    const t = b && b.threads[threadId];
+    if (!isReadThread(t)) { nav.hidden = true; return; }
+    const i = t.anchor.para;
+    const n = (b.reader && b.reader.n) || t.anchor.of || 0;
+    const busy = t.cards.some((c) => c.status === 'streaming');
+    const sig = JSON.stringify([i, n, busy, !!readerLoading]);
+    nav.hidden = false;
+    if (nav._sig === sig) return;
+    nav._sig = sig;
+    const last = n && i >= n - 1;
+    nav.replaceChildren(
+      el('span', { class: 'reader-pos muted' }, `¶ ${i + 1}${n ? ` of ${n}` : ''} · p. ${t.anchor.page || M.pageOf(t.anchor.cardId)}`),
+      el('span', { class: 'spacer' }),
+      el('button', { class: 'chalk-btn small', 'data-act': 'reader-prev', title: kbd('Previous paragraph (⌥⌘[)'), disabled: i === 0 || undefined }, '← previous'),
+      el('button', { class: 'chalk-btn small' + (busy ? '' : ' primary'), 'data-act': 'reader-next', title: kbd('Next paragraph (⌥⌘])'), disabled: last || undefined },
+        last ? 'last paragraph' : 'next paragraph →'));
   }
 
   /** Pick a PDF: the native open panel in the apps, a file input in the browser harness. */
@@ -2457,6 +2625,11 @@
       case 'lens': openLens(btn.closest('.katex-display')); break;
       case 'rename-board': renameBoard(); break;
       case 'open-pdf': openPdf(); break;
+      case 'reader-start': readerStart(); break;
+      case 'reader-next': readerStep(1); break;
+      case 'reader-prev': readerStep(-1); break;
+      case 'reader-open': readPara(b.reader ? b.reader.at : 0); break;
+      case 'reader-stop': if (b.reader) { delete b.reader; save(b); render(); } break;
       case 'paper-look': setPaperLook(S.paperLook === 'chalk' ? 'paper' : 'chalk'); break;
       case 'summary-link':
         if (!dom.modal.hidden) { dom.modal.hidden = true; dom.modal.replaceChildren(); } // a link in the recap
@@ -2645,6 +2818,7 @@
         source: openSourcePanel, font: openFontPanel,
         levelset: () => levelSet({ force: true, open: true }), profile: () => toggleLearner(), summary: () => toggleSummary(),
         lessons: () => toggleLessons(), recap: () => toggleRecap(), openPdf,
+        reader: readerStart, readerNext: () => readerStep(1), readerPrev: () => readerStep(-1),
       };
       if (cmds[name]) cmds[name]();
     },
@@ -2711,7 +2885,7 @@
     selectionToAnchor, showPopover, hidePopover, submitPopover, render, refreshConfig, toggleOutline, openMatrix,
     drawOverlay, findCardEl, levelSet, showProfile, toggleLearner, learnerContext, evidenceState, submitNote, removeNote,
     toggleSummary, writeSummary, summaryState, toggleLessons, updateLessons, lessonsShown, toggleRecap, writeRecap, recapShown, recapState, jumpToQuestion, drawDiagram, addDiagram, diagramsOn,
-    openPaper, importPaperFile, paperOf, revealPaperAnchor,
+    openPaper, importPaperFile, paperOf, revealPaperAnchor, readPara, readerStep, readerStart, readFrom,
   };
   document.addEventListener('DOMContentLoaded', boot);
 })();

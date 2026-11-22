@@ -2,7 +2,8 @@
  * exercises the same code paths a person would: prompt → highlight → side
  * question → drill deeper → run Python → compute mode → close back to the
  * original → reload from disk → reopen a branch → summarize the board →
- * draw a circuit diagram → read a PDF paper and ask about a highlighted passage → read it paragraph by paragraph.
+ * draw a circuit diagram → read a PDF paper and ask about a highlighted passage → read it paragraph by paragraph →
+ * a confidential board that only LM Studio answers.
  * opts.prompt replaces the first question; opts.pdf (a path) replaces the built-in one-page paper.
  */
 EE.selfTest = async function selfTest(opts = {}) {
@@ -159,7 +160,7 @@ EE.selfTest = async function selfTest(opts = {}) {
   // record every prompt the app sends, to check what the models are told
   const sent = [];
   const origChat = B.chat;
-  B.chat = (messages, handlers, o) => { sent.push({ purpose: (o && o.purpose) || 'explain', messages }); return origChat(messages, handlers, o); };
+  B.chat = (messages, handlers, o) => { sent.push({ purpose: (o && o.purpose) || 'explain', local: !!(o && o.local), messages }); return origChat(messages, handlers, o); };
   const lastSystem = () => { const x = sent.filter((m) => m.purpose === 'explain').pop(); return x ? x.messages[0].content : ''; };
 
   await step('model configuration', async () => {
@@ -654,6 +655,59 @@ EE.selfTest = async function selfTest(opts = {}) {
     return { paragraphs: ps.length, first: len1, second: len2, at: board.reader.at };
   });
 
+  // a word that only the confidential board's question has: it must never show up in what other boards or the level-set send
+  const SECRET = 'kumquat-quorum';
+  await step('confidential board: only LM Studio answers, and it stays out of the level-set and other boards', async () => {
+    app.closeAll();
+    app.newBoard();
+    const board = S.board;
+    const lock = document.getElementById('btn-lock');
+    lock.click();
+    assert(board.confidential === true && lock.getAttribute('aria-pressed') === 'true' && document.body.classList.contains('confidential'), 'the lock did not mark the board');
+    await waitFor(() => S.config && S.config.local === true && !S.configLoading, 30000, 'the model menu to switch to LM Studio');
+    assert(S.config.provider === 'LM Studio', 'a confidential board is set to ' + S.config.provider);
+    const offered = [...document.querySelectorAll('#model-select option')].map((o) => o.value).filter((v) => v !== '__more__');
+    assert(offered.length && offered.every((v) => v.startsWith('lmstudio|')), 'the menu offers other models: ' + offered.join(', '));
+    assert(document.getElementById('status').classList.contains('local'), 'the model pill does not show LM Studio only');
+    // the native side decides: even a request naming another model is answered by LM Studio, or refused
+    const other = (S.config.choices || []).find((ch) => !ch.id.startsWith('lmstudio|'));
+    const forced = await B.call('config', { llm: other ? other.id : 'openrouter|x', local: true });
+    assert(forced.provider === 'LM Studio' && forced.local === true, 'config with local:true answered with ' + forced.provider);
+    app.send('root', String.raw`Why is $\langle 0|1\rangle = 0$ for a qubit? Keep it short. (Ignore this tag: ${SECRET}.)`, 'explain');
+    const q = sent[sent.length - 1];
+    assert(q.local === true && q.purpose === 'explain', 'the question was not sent as local');
+    await idle();
+    const card = lastCard('root');
+    answerOk(card);
+    // a confidential request that names another model goes to LM Studio anyway
+    let viaOther = null;
+    if (other) {
+      viaOther = await new Promise((resolve) => {
+        let text = '';
+        B.chat([{ role: 'user', content: 'Reply with the single word: ok' }], {
+          onChunk: ({ content }) => { text += content; },
+          onDone: ({ model }) => resolve({ model, text }),
+          onError: (e) => resolve({ error: e.message }),
+        }, { purpose: 'explain', llm: other.id, local: true });
+      });
+      assert(!viaOther.error && viaOther.model && (!other.model || !String(viaOther.model).includes(other.model)), 'local:true with another model picked: ' + JSON.stringify(viaOther));
+    }
+    // off and on again
+    lock.click();
+    assert(!board.confidential && lock.getAttribute('aria-pressed') === 'false', 'the lock did not come off');
+    await waitFor(() => S.config && S.config.local === false && !S.configLoading, 30000, 'the model menu to come back');
+    lock.click();
+    await waitFor(() => S.config && S.config.local === true && !S.configLoading, 30000, 'the model menu to go local again');
+    await sleep(1200); // let the save land
+    const disk = JSON.parse((await B.call('selftest', { event: 'reload', id: board.id })).board);
+    assert(disk.confidential === true, 'the flag was not saved with the board');
+    // other boards and the level-set never see it
+    assert(!JSON.stringify(app.evidenceState().items).includes(SECRET), 'the level-set evidence includes the confidential board');
+    assert(!JSON.stringify(app.learnerContext(EE.model.newBoard(), null)).includes(SECRET), 'another board\'s prompt would include the confidential board');
+    await snap('14-confidential');
+    return { model: card.model, offered: offered.length, viaOther: viaOther && viaOther.model };
+  });
+
   await step('level-set button folds new ratings into the profile', async () => {
     const before = S.profile && S.profile.meta ? S.profile.meta.updatedAt : 0;
     document.getElementById('btn-levelset').click();
@@ -666,6 +720,7 @@ EE.selfTest = async function selfTest(opts = {}) {
     assert(p.meta.rated >= 1, 'the new rating was not counted');
     const lsPrompt = sent.filter((m) => m.purpose === 'levelset').pop().messages[1].content;
     assert(lsPrompt.includes(NOTE), 'the level-set did not read the private notes');
+    assert(!lsPrompt.includes(SECRET), 'the level-set read the confidential board');
     assert(p.meta.notes >= 1, 'the profile does not record the notes it read');
     await settle();
     await snap('09-profile-after-ratings');

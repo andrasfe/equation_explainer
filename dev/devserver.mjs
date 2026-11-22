@@ -30,6 +30,11 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.
   '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.svg': 'image/svg+xml', '.json': 'application/json',
   '.mjs': 'text/javascript', '.pdf': 'application/pdf' };
 
+/** The model for a confidential board: the picked one if it is an LM Studio model, else env.local. Never anything else. */
+const localChoice = (env, llm) => env.choices.find((x) => x.id === llm && x.provider === 'lmstudio') || env.local;
+const confidentialProblem = (c) => (c.provider === 'lmstudio' ? null
+  : `This board is confidential: only LM Studio (local) may answer it, not ${c.provider === 'openrouter' ? 'OpenRouter' : 'Custom'}.`);
+
 function loadEnv() {
   const file = process.env.EE_ENV_FILE || path.join(ROOT, '.env'); // same override as the app
   const vals = { ...process.env };
@@ -71,6 +76,9 @@ function loadEnv() {
       problems: p === 'openrouter' && !ep.apiKey ? ['OPENROUTER_API_KEY is not set'] : [] });
   }
   cfg.choices[0].problems = cfg.problems;
+  // a confidential board's model: the first LM Studio one, or LM Studio's defaults (localhost, whichever model is loaded)
+  cfg.local = cfg.choices.find((x) => x.provider === 'lmstudio')
+    || { ...cfg, ...endpoint('lmstudio'), provider: 'lmstudio', id: `lmstudio|${get('LMSTUDIO_MODEL') || ''}`, choices: undefined, problems: [] };
   // level-set model: OpenRouter + openai/gpt-5.6-sol-pro unless overridden
   const lsProvider = (get('LEVELSET_PROVIDER') || 'openrouter').toLowerCase();
   const lsEp = endpoint(lsProvider);
@@ -135,13 +143,15 @@ async function bridge(msg) {
     case 'ready': return { native: false };
     case 'config': {
       const env = loadEnv();
-      const c = env.choices.find((x) => x.id === msg.llm) || env.choices[0];
+      const c = { ...(msg.local ? localChoice(env, msg.llm) : env.choices.find((x) => x.id === msg.llm) || env.choices[0]) };
+      c.problems = [...c.problems];
+      if (msg.local && confidentialProblem(c)) c.problems.push(confidentialProblem(c));
       let model = c.model;
       try { model = await resolveModel(c); } catch (e) { c.problems.push(e.message); }
       const ls = env.levelset;
       const name = (p) => (p === 'openrouter' ? 'OpenRouter' : p === 'custom' || p === 'openai' ? 'Custom' : 'LM Studio');
       return { provider: name(c.provider), model, baseURL: c.baseURL, envFile: env.envFile, problems: c.problems, python: VENV_PY, packages: 'numpy sympy scipy matplotlib',
-        llm: c.id, choices: env.choices.map((x) => ({ id: x.id, provider: name(x.provider), model: x.model || '', problems: x.problems })),
+        llm: c.id, local: !!msg.local, choices: env.choices.map((x) => ({ id: x.id, provider: name(x.provider), model: x.model || '', problems: x.problems })),
         levelset: { provider: name(ls.provider), model: ls.model || 'auto', problems: ls.problems } };
     }
     case 'allBoards':
@@ -184,14 +194,16 @@ async function bridge(msg) {
 }
 
 async function chat(req, res) {
-  const { messages, purpose, llm } = JSON.parse(await readBody(req));
+  const { messages, purpose, llm, local } = JSON.parse(await readBody(req));
   res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-cache' });
   const send = (o) => res.write(JSON.stringify(o) + '\n');
   const ctrl = new AbortController();
   res.on('close', () => ctrl.abort());
   try {
     const env = loadEnv();
-    const cfg = purpose === 'levelset' ? env.levelset : env.choices.find((x) => x.id === llm) || env.choices[0];
+    const cfg = purpose === 'levelset' ? env.levelset : local ? localChoice(env, llm) : env.choices.find((x) => x.id === llm) || env.choices[0];
+    // the last word on a confidential board: nothing but LM Studio, whatever the page asked for
+    if (local && confidentialProblem(cfg)) throw new Error(confidentialProblem(cfg));
     if (cfg.problems.length) throw new Error(cfg.problems.join('; '));
     const model = await resolveModel(cfg);
     const headers = { 'content-type': 'application/json' };

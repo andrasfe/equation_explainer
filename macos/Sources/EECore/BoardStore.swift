@@ -7,6 +7,8 @@ public struct BoardSummary: Identifiable, Equatable, Sendable {
     public var createdAt: Date
     public var updatedAt: Date
     public var branchCount: Int
+    /// LM Studio only (the board's "confidential" flag)
+    public var confidential: Bool = false
 }
 
 public enum BoardStoreError: LocalizedError {
@@ -46,7 +48,7 @@ public final class BoardStore: @unchecked Sendable {
         let threads = (obj["threads"] as? [String: Any])?.count ?? 1
         let title = (obj["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled board"
         return BoardSummary(id: id, title: title, createdAt: ms("createdAt"), updatedAt: ms("updatedAt"),
-                            branchCount: max(0, threads - 1))
+                            branchCount: max(0, threads - 1), confidential: obj["confidential"] as? Bool ?? false)
     }
 
     public func list() -> [BoardSummary] {

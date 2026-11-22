@@ -27,7 +27,7 @@ gi.require_version("JavaScriptCore", "6.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, JavaScriptCore, WebKit  # noqa: E402
 
 from . import REPO_ROOT, __version__, resources_dir  # noqa: E402
-from .config import AppConfig, LLMSettings, env_values, load as load_config, parse_provider, resolve as resolve_config, support_dir, update_dotenv  # noqa: E402
+from .config import AppConfig, LLMSettings, confidential_problem, env_values, load as load_config, parse_provider, resolve as resolve_config, support_dir, update_dotenv  # noqa: E402
 from .llm import LLMClient, LLMError, StreamHandle  # noqa: E402
 from .pyrunner import PythonRunner  # noqa: E402
 from .store import BoardStore, BoardSummary, write_private  # noqa: E402
@@ -514,10 +514,13 @@ class AppModel:
 
         if cmd == "config":
             cfg = self.config
-            # the model picked in the top bar (body "llm"), or LLM_PROVIDER's
-            choice = cfg.choice(s("llm"))
+            # the model picked in the top bar (body "llm"), or LLM_PROVIDER's; a confidential board (body "local") only ever LM Studio
+            local = body.get("local") is True
+            choice = cfg.local_choice(s("llm")) if local else cfg.choice(s("llm"))
             llm = choice.settings
             problems = list(cfg.problems if choice.id == cfg.choices[0].id else choice.problems)
+            if local and confidential_problem(llm):
+                problems.append(confidential_problem(llm))
             model = llm.model or "auto"
             if llm.provider != "openrouter" or llm.api_key is not None:
                 try:
@@ -526,7 +529,7 @@ class AppModel:
                     problems.append(str(e))
             python = cfg.python.interpreter or str(self.runner.venv_python)
             return {"provider": llm.display_name, "model": model, "baseURL": llm.base_url,
-                    "llm": choice.id, "choices": [{"id": c.id, "provider": c.settings.display_name, "model": c.settings.model or "",
+                    "llm": choice.id, "local": local, "choices": [{"id": c.id, "provider": c.settings.display_name, "model": c.settings.model or "",
                                                    "problems": c.problems} for c in cfg.choices],
                     "envFile": str(cfg.env_file) if cfg.env_file else "", "problems": problems, "python": python,
                     "packages": " ".join(cfg.python.packages),
@@ -538,7 +541,7 @@ class AppModel:
             messages = [{"role": m.get("role") if isinstance(m.get("role"), str) else "user",
                          "content": m.get("content") if isinstance(m.get("content"), str) else ""}
                         for m in raw if isinstance(m, dict)]
-            self.start_chat(s("id"), messages, s("purpose"), s("llm"))
+            self.start_chat(s("id"), messages, s("purpose"), s("llm"), body.get("local") is True)
             return {"ok": True}
 
         if cmd == "allBoards":
@@ -705,15 +708,19 @@ class AppModel:
                 self.window.select(summary.id)
 
     # ---- chat streaming
-    def start_chat(self, chat_id: str, messages: list[dict], purpose: str, llm: str = "") -> None:
+    def start_chat(self, chat_id: str, messages: list[dict], purpose: str, llm: str = "", local: bool = False) -> None:
+        """local: the request comes from a confidential board, so it may only go to LM Studio."""
         cfg = self.config
         # the level-set has its own model; everything else (explanations, summaries, diagrams) uses the one picked in the top bar
         if purpose == "levelset":
-            settings, problems = cfg.level_set, cfg.level_set_problems
+            settings, problems = cfg.level_set, list(cfg.level_set_problems)
         else:
-            settings = cfg.choice(llm).settings
+            settings = (cfg.local_choice(llm) if local else cfg.choice(llm)).settings
             problems = ([f"OPENROUTER_API_KEY is missing. Add it to {cfg.env_file or '.env'} or set LLM_PROVIDER=lmstudio."]
                         if settings.provider == "openrouter" and settings.api_key is None else [])
+        # the last word on a confidential board: nothing but LM Studio, whatever the page asked for
+        if local and confidential_problem(settings):
+            problems.insert(0, confidential_problem(settings))
         if problems:
             self.web.fail_chat(chat_id, problems[0])
             return
@@ -847,6 +854,7 @@ SHORTCUTS = [  # (accelerator, app action)
     ("<Control>n", "new-board"), ("<Control>o", "open-pdf"), ("<Control>bracketleft", "close-last"), ("<Control><Shift>BackSpace", "close-all"),
     ("<Control><Shift>m", "map"), ("<Control><Shift>s", "summary"), ("<Control><Shift>k", "lessons"), ("<Control><Shift>r", "recap"),
     ("<Control><Shift>p", "reader"), ("<Control><Alt>bracketright", "reader-next"), ("<Control><Alt>bracketleft", "reader-prev"),
+    ("<Control><Alt>p", "confidential"),
     ("<Control><Alt>m", "matrix"), ("<Control>l", "focus"),
     ("<Control><Shift>l", "levelset"), ("<Control><Alt>l", "profile"), ("<Control>equal", "zoom-in"), ("<Control>plus", "zoom-in"),
     ("<Control>minus", "zoom-out"), ("<Control>0", "zoom-reset"), ("<Control>q", "quit"), ("<Control>w", "quit"),
@@ -870,7 +878,7 @@ class BoardRow(Gtk.ListBoxRow):
 
     def update(self, board: BoardSummary) -> None:
         self.board = board
-        self.title.set_text(board.title)
+        self.title.set_text(("🔒 " if board.confidential else "") + board.title)
         n = board.branch_count
         meta = GLib.markup_escape_text(rel_time(board.updated_at))
         if n:
@@ -1106,7 +1114,7 @@ class EEApplication(Adw.Application):
             [("Read the Paper Paragraph by Paragraph", "reader"), ("Next Paragraph", "reader-next"), ("Previous Paragraph", "reader-prev")],
             [("Insert Matrix…", "matrix"), ("Write on the Board", "focus")],
             [("Level-Set Now", "levelset"), ("Where I Stand & My Notes", "profile")],
-            [("Model & Runtime…", "config"), ("Open .env", "open-env"), ("Reveal Boards Folder", "reveal-boards")],
+            [("Confidential Board (LM Studio Only)", "confidential"), ("Model & Runtime…", "config"), ("Open .env", "open-env"), ("Reveal Boards Folder", "reveal-boards")],
             [("Zoom In", "zoom-in"), ("Zoom Out", "zoom-out"), ("Actual Size", "zoom-reset")],
             [("Quit", "quit")],
         ]
@@ -1135,7 +1143,8 @@ class EEApplication(Adw.Application):
         for name, page in (("close-last", "closeLast"), ("close-all", "closeAll"), ("map", "toggleMap"), ("summary", "summary"),
                            ("matrix", "insertMatrix"), ("focus", "focus"), ("levelset", "levelset"), ("profile", "profile"),
                            ("config", "config"), ("open-pdf", "openPdf"), ("lessons", "lessons"),
-                           ("recap", "recap"), ("reader", "reader"), ("reader-next", "readerNext"), ("reader-prev", "readerPrev")):
+                           ("recap", "recap"), ("reader", "reader"), ("reader-next", "readerNext"), ("reader-prev", "readerPrev"),
+                           ("confidential", "confidential")):
             act(name, cmd(page))
         act("open-env", lambda: m() and m().open_env())
         act("reveal-boards", lambda: m() and m().reveal_boards_folder())

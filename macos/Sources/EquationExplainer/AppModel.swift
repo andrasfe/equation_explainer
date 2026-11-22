@@ -193,10 +193,12 @@ final class AppModel: ObservableObject {
 
         case "config":
             let cfg = config
-            // the model picked in the top bar (body "llm"), or LLM_PROVIDER's
-            let choice = cfg.choice(str("llm"))
+            // the model picked in the top bar (body "llm"), or LLM_PROVIDER's; a confidential board (body "local") only ever LM Studio
+            let local = body["local"] as? Bool ?? false
+            let choice = local ? cfg.localChoice(str("llm")) : cfg.choice(str("llm"))
             let llm = choice.settings
             var problems = choice.id == cfg.choices[0].id ? cfg.problems : choice.problems
+            if local, let p = AppConfig.confidentialProblem(llm) { problems.append(p) }
             var model = llm.model ?? "auto"
             if llm.provider != .openrouter || llm.apiKey != nil {
                 do { model = try await LLMClient(settings: llm).resolveModel() } catch { problems.append(error.localizedDescription) }
@@ -208,7 +210,7 @@ final class AppModel: ObservableObject {
             let levelSet: [String: Any] = ["provider": cfg.levelSet.displayName, "model": cfg.levelSet.model ?? "auto",
                                            "problems": cfg.levelSetProblems]
             return ["provider": llm.displayName, "model": model, "baseURL": llm.baseURL.absoluteString,
-                    "llm": choice.id, "choices": choices,
+                    "llm": choice.id, "choices": choices, "local": local,
                     "envFile": cfg.envFile?.path ?? "", "problems": problems, "python": python,
                     "packages": cfg.python.packages.joined(separator: " "), "levelset": levelSet]
 
@@ -216,7 +218,7 @@ final class AppModel: ObservableObject {
             let id = str("id")
             let raw = body["messages"] as? [[String: Any]] ?? []
             let messages = raw.map { ["role": $0["role"] as? String ?? "user", "content": $0["content"] as? String ?? ""] }
-            startChat(id: id, messages: messages, purpose: str("purpose"), llm: str("llm"))
+            startChat(id: id, messages: messages, purpose: str("purpose"), llm: str("llm"), local: body["local"] as? Bool ?? false)
             return ["ok": true]
 
         case "allBoards":
@@ -345,18 +347,21 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func startChat(id: String, messages: [[String: String]], purpose: String, llm: String) {
+    /// `local`: the request comes from a confidential board, so it may only go to LM Studio.
+    private func startChat(id: String, messages: [[String: String]], purpose: String, llm: String, local: Bool) {
         let cfg = config
         // the level-set has its own model; everything else (explanations, summaries, diagrams) uses the one picked in the top bar
         let settings: LLMSettings
-        let problems: [String]
+        var problems: [String]
         switch purpose {
         case "levelset": (settings, problems) = (cfg.levelSet, cfg.levelSetProblems)
         default:
-            settings = cfg.choice(llm).settings
+            settings = (local ? cfg.localChoice(llm) : cfg.choice(llm)).settings
             problems = settings.provider == .openrouter && settings.apiKey == nil
                 ? ["OPENROUTER_API_KEY is missing. Add it to \(cfg.envFile?.path ?? ".env") or set LLM_PROVIDER=lmstudio."] : []
         }
+        // the last word on a confidential board: nothing but LM Studio, whatever the page asked for
+        if local, let p = AppConfig.confidentialProblem(settings) { problems.insert(p, at: 0) }
         if let problem = problems.first {
             web.failChat(id: id, message: problem)
             return

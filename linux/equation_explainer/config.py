@@ -85,10 +85,23 @@ class AppConfig:
     problems: list[str] = field(default_factory=list)
     level_set_problems: list[str] = field(default_factory=list)
     choices: list[LLMChoice] = field(default_factory=list)  # every model the board can switch to; the first is llm
+    # the LM Studio model a confidential board falls back to: the first LM Studio choice, or LM Studio's defaults
+    # (localhost, whichever model is loaded) when .env sets none up
+    local: Optional[LLMChoice] = None
 
     def choice(self, choice_id: Optional[str]) -> LLMChoice:
         """The choice with this id, or the default (LLM_PROVIDER's model) when it is unknown or .env no longer lists it."""
         return next((c for c in self.choices if c.id == choice_id), self.choices[0])
+
+    def local_choice(self, choice_id: Optional[str]) -> LLMChoice:
+        """The model for a confidential board: the picked one if it is an LM Studio model, else `local`. Never anything else."""
+        picked = next((c for c in self.choices if c.id == choice_id and c.settings.provider == "lmstudio"), None)
+        return picked or self.local or next(c for c in self.choices if c.settings.provider == "lmstudio")
+
+
+def confidential_problem(s: LLMSettings) -> Optional[str]:
+    """Why a confidential board may not send to these settings, or None when it may (LM Studio only)."""
+    return None if s.provider == "lmstudio" else f"This board is confidential: only LM Studio (local) may answer it, not {s.display_name}."
 
 
 def parse_provider(raw: str) -> Optional[str]:
@@ -266,8 +279,7 @@ def resolve(values: dict[str, str], env_file: Optional[Path]) -> AppConfig:
         "openrouter": get("OPENROUTER_API_KEY") is not None,
         "custom": get("LLM_BASE_URL") is not None,
     }
-    choices: list[LLMChoice] = []
-    for prov in [provider] + [x for x in ("lmstudio", "openrouter", "custom") if x != provider and configured[x]]:
+    def build(prov: str) -> tuple[list[LLMChoice], list[str]]:
         base, key, model = _endpoint(prov, get)
         pp: list[str] = []
         if prov == "openrouter" and key is None:
@@ -282,14 +294,21 @@ def resolve(values: dict[str, str], env_file: Optional[Path]) -> AppConfig:
         for m in [n for n in named if n] + (get(f"{pre}_MODELS") or "").replace(",", " ").split():
             if m not in models:
                 models.append(m)
-        for m in models:
-            s = LLMSettings(prov, url, key, m, 0.3 if temperature is None else temperature,
-                            8192 if max_tokens is None else max_tokens, extra_body)
-            choices.append(LLMChoice(f"{prov}|{m or ''}", s, pp + shared))
+        out = [LLMChoice(f"{prov}|{m or ''}",
+                         LLMSettings(prov, url, key, m, 0.3 if temperature is None else temperature,
+                                     8192 if max_tokens is None else max_tokens, extra_body),
+                         pp + shared) for m in models]
+        return out, pp
+
+    choices: list[LLMChoice] = []
+    for prov in [provider] + [x for x in ("lmstudio", "openrouter", "custom") if x != provider and configured[x]]:
+        built, pp = build(prov)
+        choices += built
         if prov == provider:
             problems += pp
     problems += shared
     llm = choices[0].settings
+    local = next((c for c in choices if c.settings.provider == "lmstudio"), None) or build("lmstudio")[0][0]
 
     # Level-set (learner profile): OpenRouter + the sol-pro model unless overridden.
     ls_problems: list[str] = []
@@ -319,4 +338,4 @@ def resolve(values: dict[str, str], env_file: Optional[Path]) -> AppConfig:
                             120.0 if timeout is None else timeout)
 
     return AppConfig(llm=llm, level_set=level_set, python=python, env_file=env_file,
-                     problems=problems, level_set_problems=ls_problems, choices=choices)
+                     problems=problems, level_set_problems=ls_problems, choices=choices, local=local)

@@ -181,6 +181,30 @@ def test_chat_cancel_and_missing_key(model, tmp_path, monkeypatch):
     assert "OPENROUTER_API_KEY is missing" in model.web.failed["c5"]  # the board's model, like an explanation
 
 
+def test_confidential_board_goes_to_lm_studio_or_nowhere(model, tmp_path, monkeypatch, model_server):
+    # OpenRouter is the default and picked, with a key, but points nowhere: a request sent there would fail
+    env = tmp_path / "both.env"
+    env.write_text(f"LLM_PROVIDER=openrouter\nOPENROUTER_API_KEY=not-a-key\nOPENROUTER_BASE_URL=http://127.0.0.1:9/v1\n"
+                   f"LMSTUDIO_BASE_URL={model_server}\nLEVELSET_PROVIDER=openrouter\n")
+    monkeypatch.setenv("EE_ENV_FILE", str(env))
+    picked = "openrouter|anthropic/claude-fable-5.1"
+    cfg = model.handle("config", {"llm": picked, "local": True})
+    assert (cfg["provider"], cfg["llm"], cfg["local"], cfg["problems"]) == ("LM Studio", "lmstudio|", True, [])
+    assert model.handle("config", {"llm": picked})["provider"] == "OpenRouter"  # other boards keep the pick
+
+    for cid, purpose in (("k1", "explain"), ("k2", "summary"), ("k3", "diagram")):
+        model.handle("chat", {"id": cid, "purpose": purpose, "llm": picked, "local": True,
+                              "messages": [{"role": "user", "content": "hi"}]})
+        for _ in range(100):
+            if cid in model.web.done or cid in model.web.failed:
+                break
+            time.sleep(0.05)
+        assert model.web.done.get(cid) == {"model": "stub-model", "finish": "stop"}, model.web.failed.get(cid)
+    # the level-set model is OpenRouter here, so a confidential request for it is refused before anything is sent
+    model.handle("chat", {"id": "k4", "purpose": "levelset", "local": True, "messages": [{"role": "user", "content": "hi"}]})
+    assert "confidential" in model.web.failed["k4"]
+
+
 def test_source_picker_lists_models_and_switches_env(model, tmp_path, monkeypatch):
     src = model.handle("llmSources", {})
     assert src["current"]["provider"] == "custom" and [x["provider"] for x in src["sources"]] == ["openrouter", "lmstudio", "custom"]

@@ -22,6 +22,7 @@ class BoardSummary:
     created_at: float  # seconds since the epoch
     updated_at: float
     branch_count: int
+    confidential: bool = False  # LM Studio only (the board's "confidential" flag)
 
 
 class BoardStoreError(Exception):
@@ -52,7 +53,7 @@ def summary_from(data: bytes) -> Optional[BoardSummary]:
     threads = obj.get("threads")
     n = len(threads) if isinstance(threads, dict) else 1
     title = obj.get("title") if isinstance(obj.get("title"), str) and obj.get("title") else "Untitled board"
-    return BoardSummary(obj["id"], title, ms("createdAt"), ms("updatedAt"), max(0, n - 1))
+    return BoardSummary(obj["id"], title, ms("createdAt"), ms("updatedAt"), max(0, n - 1), obj.get("confidential") is True)
 
 
 def write_private(data: bytes, path: Path) -> None:

@@ -57,16 +57,18 @@ EE.bridge = (() => {
 
   /** Start a streamed chat completion. Returns {id, cancel()}.
    *  opts.purpose: 'explain', 'summary' or 'diagram' (all on the model picked in the top bar) or 'levelset' (the learner-profile model).
-   *  opts.llm: id of the model picked in the top bar; empty = LLM_PROVIDER's. */
+   *  opts.llm: id of the model picked in the top bar; empty = LLM_PROVIDER's.
+   *  opts.local: the request is from a confidential board; the native side then sends it to LM Studio or nowhere. */
   function chat(messages, handlers, opts = {}) {
     const id = EE.util.uid('chat');
     const purpose = opts.purpose || 'explain';
     const llm = opts.llm || '';
+    const local = !!opts.local;
     chats.set(id, handlers);
     if (isNative) {
-      call('chat', { id, messages, purpose, llm }).catch((e) => EE.native.error({ id, message: e.message }));
+      call('chat', { id, messages, purpose, llm, local }).catch((e) => EE.native.error({ id, message: e.message }));
     } else {
-      devChat(id, messages, purpose, llm);
+      devChat(id, messages, purpose, llm, local);
     }
     return {
       id,
@@ -81,7 +83,7 @@ EE.bridge = (() => {
     };
   }
 
-  async function devChat(id, messages, purpose, llm) {
+  async function devChat(id, messages, purpose, llm, local) {
     const h = chats.get(id);
     const ctrl = new AbortController();
     h.ctrl = ctrl;
@@ -89,7 +91,7 @@ EE.bridge = (() => {
       const res = await fetch('/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ messages, purpose, llm }),
+        body: JSON.stringify({ messages, purpose, llm, local }),
         signal: ctrl.signal,
       });
       if (!res.ok) throw new Error(await res.text());

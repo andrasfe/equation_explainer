@@ -92,6 +92,8 @@ struct BoardCommands: Commands {
             Button("Where I Stand & My Notes") { model.web.command("profile") }
                 .keyboardShortcut("l", modifiers: [.command, .option])
             Divider()
+            Button("Confidential Board (LM Studio Only)") { model.web.command("confidential") }
+                .keyboardShortcut("p", modifiers: [.command, .option])
             Button("Model & Runtime…") { model.web.command("config") }
             Button("Open .env") { model.openEnv() }
             Button("Reveal Boards Folder") { model.revealBoardsFolder() }

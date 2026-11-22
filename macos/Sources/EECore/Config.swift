@@ -105,6 +105,9 @@ public struct AppConfig: Sendable {
     public var llm: LLMSettings
     /// Every model the board can switch to; the first is `llm`.
     public var choices: [LLMChoice]
+    /// The LM Studio model a confidential board falls back to: the first LM Studio choice, or LM Studio's defaults
+    /// (localhost, whichever model is loaded) when .env sets none up.
+    public var local: LLMChoice
     /// The model that builds the learner profile ("level-set"); OpenRouter by default.
     public var levelSet: LLMSettings
     public var python: PythonSettings
@@ -118,6 +121,16 @@ public struct AppConfig: Sendable {
     /// The choice with this id, or the default (LLM_PROVIDER's model) when it is unknown or .env no longer lists it.
     public func choice(_ id: String?) -> LLMChoice {
         choices.first { $0.id == id } ?? choices[0]
+    }
+
+    /// The model for a confidential board: the picked one if it is an LM Studio model, else `local`. Never anything else.
+    public func localChoice(_ id: String?) -> LLMChoice {
+        choices.first { $0.id == id && $0.settings.provider == .lmstudio } ?? local
+    }
+
+    /// Why a confidential board may not send to these settings, or nil when it may (LM Studio only).
+    public static func confidentialProblem(_ s: LLMSettings) -> String? {
+        s.provider == .lmstudio ? nil : "This board is confidential: only LM Studio (local) may answer it, not \(s.displayName)."
     }
 
     static func choiceId(_ provider: LLMSettings.Provider, _ model: String?) -> String { "\(provider.rawValue)|\(model ?? "")" }
@@ -215,8 +228,7 @@ public struct AppConfig: Sendable {
             case .custom: return get("LLM_BASE_URL") != nil
             }
         }
-        var choices: [LLMChoice] = []
-        for p in [provider] + [LLMSettings.Provider.lmstudio, .openrouter, .custom].filter({ $0 != provider && configured($0) }) {
+        func build(_ p: LLMSettings.Provider) -> (choices: [LLMChoice], problems: [String]) {
             let ep = endpoint(p, get)
             var pp: [String] = []
             if p == .openrouter && ep.key == nil { pp.append("OPENROUTER_API_KEY is not set in .env") }
@@ -229,17 +241,25 @@ public struct AppConfig: Sendable {
             let listed = (get("\(pre)_MODELS") ?? "").split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
             var models: [String?] = [ep.model]
             for m in named + listed where !models.contains(m) { models.append(m) }
-            for m in models {
-                let s = LLMSettings(provider: p, baseURL: base, apiKey: ep.key, model: m,
-                                    temperature: get("LLM_TEMPERATURE").flatMap(Double.init) ?? 0.3,
-                                    maxTokens: get("LLM_MAX_TOKENS").flatMap(Int.init) ?? 8192,
-                                    extraBodyJSON: extraBody)
-                choices.append(LLMChoice(id: choiceId(p, m), settings: s, problems: pp + shared))
+            let out = models.map { m in
+                LLMChoice(id: choiceId(p, m),
+                          settings: LLMSettings(provider: p, baseURL: base, apiKey: ep.key, model: m,
+                                                temperature: get("LLM_TEMPERATURE").flatMap(Double.init) ?? 0.3,
+                                                maxTokens: get("LLM_MAX_TOKENS").flatMap(Int.init) ?? 8192,
+                                                extraBodyJSON: extraBody),
+                          problems: pp + shared)
             }
-            if p == provider { problems += pp }
+            return (out, pp)
+        }
+        var choices: [LLMChoice] = []
+        for p in [provider] + [LLMSettings.Provider.lmstudio, .openrouter, .custom].filter({ $0 != provider && configured($0) }) {
+            let b = build(p)
+            choices += b.choices
+            if p == provider { problems += b.problems }
         }
         problems += shared
         let llm = choices[0].settings
+        let local = choices.first { $0.settings.provider == .lmstudio } ?? build(.lmstudio).choices[0]
 
         // Level-set (learner profile): OpenRouter + openai/gpt-5.6-sol-pro unless overridden.
         var lsProblems: [String] = []
@@ -265,7 +285,7 @@ public struct AppConfig: Sendable {
             packages: packages,
             timeout: get("PYTHON_TIMEOUT").flatMap(Double.init) ?? 120)
 
-        return AppConfig(llm: llm, choices: choices, levelSet: levelSet, python: python, envFile: envFile,
+        return AppConfig(llm: llm, choices: choices, local: local, levelSet: levelSet, python: python, envFile: envFile,
                          problems: problems, levelSetProblems: lsProblems)
     }
 }

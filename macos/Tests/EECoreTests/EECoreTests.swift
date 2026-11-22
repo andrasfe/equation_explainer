@@ -99,6 +99,24 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(both.choice("lmstudio|").settings.baseURL.absoluteString, "http://box:1234/v1")
     }
 
+    func testConfidentialBoardsOnlyEverGetLMStudio() {
+        let c = AppConfig.resolve(values: ["LLM_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "k", "LMSTUDIO_MODEL": "gemma",
+                                           "LMSTUDIO_MODELS": "qwen"], envFile: nil)
+        XCTAssertEqual(c.localChoice("lmstudio|qwen").id, "lmstudio|qwen")                          // an LM Studio pick is kept
+        XCTAssertEqual(c.localChoice("openrouter|anthropic/claude-fable-5.1").id, "lmstudio|gemma") // anything else: the first LM Studio one
+        XCTAssertEqual(c.localChoice("").id, "lmstudio|gemma")                                      // even when the default is OpenRouter
+        XCTAssertNil(AppConfig.confidentialProblem(c.localChoice("").settings))
+        XCTAssertTrue(AppConfig.confidentialProblem(c.choice("").settings)?.contains("confidential") ?? false)
+        // .env names no LM Studio model at all: LM Studio's defaults (localhost, the loaded model), never OpenRouter
+        let bare = AppConfig.resolve(values: ["OPENROUTER_API_KEY": "k"], envFile: nil)
+        XCTAssertEqual(bare.choices.map(\.id), ["openrouter|anthropic/claude-fable-5.1"])                // the menu is unchanged
+        let s = bare.localChoice("openrouter|anthropic/claude-fable-5.1").settings
+        XCTAssertEqual(s.provider, .lmstudio)
+        XCTAssertEqual(s.baseURL.absoluteString, "http://localhost:1234/v1")
+        XCTAssertNil(s.model)
+        XCTAssertNil(s.apiKey)
+    }
+
     func testTrailingSlashAndBadExtraBody() {
         let c = AppConfig.resolve(values: ["LMSTUDIO_BASE_URL": "http://box:1234/v1/", "LLM_EXTRA_BODY": "nope"], envFile: nil)
         XCTAssertEqual(c.llm.baseURL.absoluteString, "http://box:1234/v1")
@@ -157,6 +175,8 @@ final class BoardStoreTests: XCTestCase {
         let s = try store.save("b1", data: Data(json.utf8))
         XCTAssertEqual(s?.title, "Grover")
         XCTAssertEqual(s?.branchCount, 2)
+        XCTAssertEqual(s?.confidential, false)
+        XCTAssertEqual(BoardStore.summary(from: Data(#"{"id":"b9","confidential":true}"#.utf8))?.confidential, true)
         XCTAssertEqual(store.list().map(\.id), ["b1"])
         let renamed = try store.rename("b1", title: "QFT")
         XCTAssertEqual(BoardStore.summary(from: renamed)?.title, "QFT")

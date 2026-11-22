@@ -109,6 +109,21 @@ def test_model_choices_list_every_configured_model():
     assert both.choice("lmstudio|").settings.base_url == "http://box:1234/v1"
 
 
+def test_confidential_boards_only_ever_get_lm_studio():
+    c = config.resolve({"LLM_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "k", "LMSTUDIO_MODEL": "gemma",
+                        "LMSTUDIO_MODELS": "qwen"}, None)
+    assert c.local_choice("lmstudio|qwen").id == "lmstudio|qwen"  # an LM Studio pick is kept
+    assert c.local_choice("openrouter|anthropic/claude-fable-5.1").id == "lmstudio|gemma"  # anything else: the first LM Studio one
+    assert c.local_choice("").id == "lmstudio|gemma"  # even when the board's default is OpenRouter
+    assert config.confidential_problem(c.local_choice("").settings) is None
+    assert "confidential" in config.confidential_problem(c.choice("").settings)
+    # .env names no LM Studio model at all: LM Studio's defaults (localhost, the loaded model), never OpenRouter
+    bare = config.resolve({"OPENROUTER_API_KEY": "k"}, None)
+    assert [x.id for x in bare.choices] == ["openrouter|anthropic/claude-fable-5.1"]  # the menu is unchanged
+    s = bare.local_choice("openrouter|anthropic/claude-fable-5.1").settings
+    assert (s.provider, s.base_url, s.model, s.api_key) == ("lmstudio", "http://localhost:1234/v1", None, None)
+
+
 def test_trailing_slash_and_bad_extra_body():
     c = config.resolve({"LMSTUDIO_BASE_URL": "http://box:1234/v1/", "LLM_EXTRA_BODY": "nope"}, None)
     assert c.llm.base_url == "http://box:1234/v1"
@@ -271,7 +286,8 @@ def test_store_save_list_rename_delete(tmp_path):
     store = BoardStore(tmp_path / "Boards")
     doc = b'{"id":"b1","title":"Grover","createdAt":1000,"updatedAt":2000,"threads":{"root":{},"t1":{},"t2":{}}}'
     s = store.save("b1", doc)
-    assert s.title == "Grover" and s.branch_count == 2
+    assert s.title == "Grover" and s.branch_count == 2 and not s.confidential
+    assert summary_from(b'{"id":"b9","confidential":true}').confidential
     assert [b.id for b in store.list()] == ["b1"]
     renamed = store.rename("b1", "QFT")
     assert summary_from(renamed).title == "QFT"

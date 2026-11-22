@@ -85,7 +85,7 @@ struct BoardRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(board.title)
+            Text((board.confidential ? "🔒 " : "") + board.title)
                 .font(.custom("Chalkboard SE", size: 14))
                 .lineLimit(2)
             HStack(spacing: 4) {

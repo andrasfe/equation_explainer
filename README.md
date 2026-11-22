@@ -42,6 +42,17 @@ You can also **read a PDF paper** on the board and highlight its passages the sa
     running heads and page numbers are left out.
   - The place you got to is saved with the board. Each paragraph read counts as a side question, so the summary,
     the lessons learned and the recap include them.
+- **Confidential boards: LM Studio only.** **🔓** in the top bar (⌥⌘P, or **Board ▸ Confidential Board**) locks
+  the board you are on; **🔒 local only** unlocks it again. You can lock a fresh board before its first question.
+  - Everything the board asks goes to LM Studio on this computer: explanations, side questions, summary, lessons,
+    recap, diagrams and the paper reader. The model menu lists only LM Studio models while you are on it, and a pick
+    there is kept apart from the one your other boards use. If `.env` names no LM Studio model, the board uses LM
+    Studio's defaults (`http://localhost:1234/v1`, whatever model is loaded).
+  - The app itself enforces it, not only the page: a confidential request that names any other model is answered
+    by LM Studio, and the level-set model is refused unless it is LM Studio.
+  - Its questions stay on the board. The level-set leaves it out, and other boards' prompts do not mention it.
+  - The flag is saved with the board and shown as 🔒 in the board list. Locking a board stops any answer still
+    coming from another model. "Local" means the address in `LMSTUDIO_BASE_URL`; keep it on this machine.
 - **Real math.** KaTeX renders LaTeX, matrices (`pmatrix`, `bmatrix`, …) and Dirac notation
   (`\ket`, `\bra`, `\braket`). The **▦ matrix** helper builds matrices with presets (I, X, Y, Z, H, S, T, CNOT).
 - **It learns where you stand.**
@@ -155,7 +166,7 @@ LM Studio once any `LMSTUDIO_*` key is, a custom server once `LLM_BASE_URL` is).
 busy you can send the next one to OpenRouter without waiting. It is remembered across launches. Add more models
 with a named key such as `OPENROUTER_ALT_MODEL` (any `OPENROUTER_<name>_MODEL`, `LMSTUDIO_<name>_MODEL` or
 `LLM_<name>_MODEL`) or with `OPENROUTER_MODELS` / `LMSTUDIO_MODELS` / `LLM_MODELS` (comma-separated). ⓘ beside it opens *Model & runtime*. The level-set
-keeps its own model; diagrams are drawn by the model you picked. **more models…** at the end of the menu opens the source panel: pick OpenRouter,
+keeps its own model; diagrams are drawn by the model you picked. On a confidential board the menu shows only LM Studio models. **more models…** at the end of the menu opens the source panel: pick OpenRouter,
 LM Studio or a custom endpoint and any model the server lists, and **use** writes `LLM_PROVIDER` and the model key
 to `.env` as the new default (API keys and endpoints are still edited in the file).
 
@@ -204,6 +215,7 @@ macOS uses ⌘, Linux uses Ctrl; the tooltips in the app show the right one.
 | new board / write on the board | `⌘N` / `⌘L` | `Ctrl+N` / `Ctrl+L` |
 | read a PDF paper | `⌘O` (or drop a PDF on the board) | `Ctrl+O` |
 | read it paragraph by paragraph / next / previous paragraph | `⇧⌘P` / `⌥⌘]` / `⌥⌘[` | `Ctrl+Shift+P` / `Ctrl+Alt+]` / `Ctrl+Alt+[` |
+| confidential board (LM Studio only) on / off | `⌥⌘P` | `Ctrl+Alt+P` |
 | zoom in / out / actual size | `⌘=` / `⌘−` / `⌘0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | write / new line | `Enter` / `Shift+Enter` (`⌘Enter` runs in python mode, saves a note) | same with `Ctrl+Enter` |
 

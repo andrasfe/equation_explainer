@@ -17,6 +17,7 @@
     outlineOpen: false,
     config: null,
     llm: '',            // model picked in the top bar ("provider|model"); '' = LLM_PROVIDER's
+    localLlm: '',       // the LM Studio model picked while on a confidential board (they never use S.llm)
     library: new Map(), // boardId -> every saved board (the learner model looks across all of them)
     profile: null,      // learner profile from the last level-set
     notes: [],          // the student's own directions [{id, text, createdAt, updatedAt}]; private, never in git
@@ -159,9 +160,56 @@
     return card;
   }
 
-  /** Profile + everything asked since it was made (all boards), so each rating counts right away. */
+  // ------------------------------------------------------------ confidential boards: LM Studio (local) only
+  const isConfidential = (b) => !!(b && b.confidential);
+  /** Options for B.chat on a board's behalf. A confidential board asks with local: true, which the native side
+   *  sends to an LM Studio model or not at all; its own pick (S.localLlm) is kept apart from the everyday one. */
+  function llmOpts(board, purpose) {
+    return isConfidential(board) ? { purpose, llm: S.localLlm, local: true } : { purpose, llm: S.llm };
+  }
+  /** Boards whose questions may go into another board's prompts or the level-set: never a confidential one. */
+  const shareable = (boards) => boards.filter((b) => !isConfidential(b));
+
+  function toggleConfidential(force) {
+    const b = S.board;
+    if (!b) return;
+    const on = typeof force === 'boolean' ? force : !isConfidential(b);
+    if (on === isConfidential(b)) return;
+    if (on) {
+      b.confidential = true;
+      // whatever this board still has on its way to another model stops here
+      for (const [cardId, st] of S.streams) if (st.boardId === b.id) cancelCard(cardId);
+      for (const m of [S.sums, S.ljobs, S.recaps]) { const j = m.get(b.id); if (j && j.running && j.cancel) j.cancel(); }
+      for (const j of S.dgJobs.values()) if (j.boardId === b.id && j.cancel) j.cancel();
+    } else delete b.confidential;
+    save(b);
+    render();
+    refreshConfig().then(() => {
+      const c = S.config || {};
+      toast(on ? `Confidential: this board only talks to LM Studio (${c.model || 'the loaded model'}). It stays out of the level-set and other boards.`
+        : 'No longer confidential: this board uses the model picked at the top right.');
+    });
+    updateLevelChip();
+    B.call('current', { id: b.id, title: b.title || '' }).catch(() => {});
+  }
+
+  function renderConfidential() {
+    const on = isConfidential(S.board);
+    document.body.classList.toggle('confidential', on);
+    dom.lockBtn.classList.toggle('on', on);
+    dom.lockBtn.textContent = on ? '🔒 local only' : '🔓';
+    dom.lockBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    dom.lockBtn.title = kbd(on
+      ? 'Confidential: only LM Studio (local) answers on this board, and it stays out of the level-set and other boards. Click to allow every model (⌥⌘P)'
+      : 'Mark this board confidential: only LM Studio (local) may answer, never OpenRouter (⌥⌘P)');
+    // the model menu follows the board: LM Studio models only on a confidential one
+    if (S.config && !!S.config.local !== on && !S.configLoading) refreshConfig();
+  }
+
+  /** Profile + everything asked since it was made (all boards), so each rating counts right away.
+   *  A confidential board's questions only go into its own prompts, which stay on LM Studio. */
   function learnerContext(board, answerCardId) {
-    const boards = new Map(S.library);
+    const boards = new Map([...S.library].filter(([, b]) => isConfidential(board) || !isConfidential(b)));
     boards.set(board.id, board);
     const since = S.profile && S.profile.meta ? S.profile.meta.updatedAt : 0;
     const items = M.evidence([...boards.values()])
@@ -218,7 +266,7 @@
         save(board);
         if (board === S.board) render();
       },
-    }, { llm: S.llm });
+    }, llmOpts(board, 'explain'));
     S.streams.set(card.id, { ...h, boardId: board.id });
   }
 
@@ -390,7 +438,7 @@
           finish();
         },
         onError(err) { entry.error = err.message; finish(); },
-      }, { purpose: 'diagram', llm: S.llm });
+      }, llmOpts(board, 'diagram'));
       job.cancel = h.cancel;
     };
     refresh();
@@ -569,6 +617,7 @@
     const b = S.board;
     if (!b) return;
     renderCrumbs();
+    renderConfidential();
     const path = b.openPath;
     for (const [tid, c] of cols) {
       if (!path.includes(tid) || !b.threads[tid]) { c.root.remove(); cols.delete(tid); }
@@ -1375,25 +1424,37 @@
   async function refreshConfig() {
     const lsProblems = (c) => (c && c.levelset && c.levelset.problems) || [];
     const before = lsProblems(S.config);
+    const local = isConfidential(S.board);
     try {
-      S.config = await B.call('config', { llm: S.llm });
+      S.configLoading = true;
+      S.config = await B.call('config', local ? { llm: S.localLlm, local } : { llm: S.llm });
     } catch (e) {
-      S.config = { problems: [e.message] };
+      S.config = { problems: [e.message], local };
+    } finally {
+      S.configLoading = false;
     }
     const c = S.config;
     // a level-set warning that came from .env goes away once .env is fixed
     if (S.ls.error && before.includes(S.ls.error) && !lsProblems(c).includes(S.ls.error)) S.ls.error = null;
     const bad = (c.problems || []).length > 0;
     dom.status.classList.toggle('bad', bad);
-    dom.status.title = bad ? c.problems.join('\n') : `${c.provider} · ${c.model}\n${c.baseURL}`;
+    dom.status.title = (c.local ? 'Confidential board: LM Studio only\n' : '') + (bad ? c.problems.join('\n') : `${c.provider} · ${c.model}\n${c.baseURL}`);
+    dom.status.classList.toggle('local', !!c.local);
     renderModelMenu(c);
+    // the board may have changed sides while this was loading
+    if (local !== isConfidential(S.board)) refreshConfig();
   }
 
-  /** The top-right menu: every model .env names; the picked one answers new questions and summaries. */
+  /** The top-right menu: every model .env names; the picked one answers new questions and summaries.
+   *  On a confidential board only the LM Studio models (or LM Studio's loaded model, when .env names none). */
   function renderModelMenu(c) {
     const short = (m) => truncate(m.replace(/^[^/]+\//, ''), 30); // drop the "org/" prefix
-    const label = (ch) => `${ch.provider} · ${ch.model ? short(ch.model) : 'loaded model'}`;
-    const choices = c.choices || [];
+    const label = (ch) => (c.local ? '🔒 ' : '') + `${ch.provider} · ${ch.model ? short(ch.model) : 'loaded model'}`;
+    let choices = c.choices || [];
+    if (c.local) {
+      choices = choices.filter((ch) => ch.id.startsWith('lmstudio|'));
+      if (!choices.some((ch) => ch.id === c.llm)) choices = [{ id: c.llm, provider: c.provider, model: '' }, ...choices];
+    }
     const opts = choices.length
       ? choices.map((ch) => el('option', { value: ch.id, title: `${ch.provider} · ${ch.model || 'whichever model is loaded'}` }, label(ch)))
       : [el('option', { value: '' }, c.provider ? `${c.provider} · ${truncate(c.model || 'auto', 28)}` : 'no model')];
@@ -1402,23 +1463,24 @@
     dom.modelSelect.value = c.llm || '';
     // LM Studio's loaded model, resolved for this request, shows in the label when .env leaves it blank
     const cur = choices.find((ch) => ch.id === c.llm);
-    if (cur && !cur.model && c.model && c.model !== 'auto') dom.modelSelect.selectedOptions[0].textContent = `${cur.provider} · ${short(c.model)}`;
+    if (cur && !cur.model && c.model && c.model !== 'auto') dom.modelSelect.selectedOptions[0].textContent = (c.local ? '🔒 ' : '') + `${cur.provider} · ${short(c.model)}`;
   }
 
   const MORE_MODELS = '__more__';
   function onModelMenu() {
     const id = dom.modelSelect.value;
     if (id !== MORE_MODELS) { pickModel(id); return; }
-    dom.modelSelect.value = S.llm || '';
+    dom.modelSelect.value = (S.config && S.config.llm) || '';
     openSourcePanel();
   }
 
   async function pickModel(id) {
-    S.llm = id;
-    try { localStorage.setItem('ee.llm', id); } catch (e) { /* storage may be unavailable */ }
+    const local = isConfidential(S.board);
+    if (local) S.localLlm = id; else S.llm = id;
+    try { localStorage.setItem(local ? 'ee.llm.local' : 'ee.llm', id); } catch (e) { /* storage may be unavailable */ }
     await refreshConfig();
     const c = S.config || {};
-    toast(`New questions go to ${c.provider} · ${c.model}.`);
+    toast(local ? `New questions on confidential boards go to ${c.provider} · ${c.model}.` : `New questions go to ${c.provider} · ${c.model}.`);
     if (S.summaryOpen) renderSummary(true);
     renderRecap(true);
   }
@@ -1600,7 +1662,7 @@
   }
 
   function evidenceState() {
-    const items = M.evidence(allBoards());
+    const items = M.evidence(shareable(allBoards()));
     const hash = M.evidenceHash(items, S.notes);
     const stale = !!items.length && (!S.profile || !S.profile.meta || S.profile.meta.hash !== hash);
     return { items, hash, stale };
@@ -1618,7 +1680,7 @@
   /** Holistic reassessment across every board, on the level-set model (OpenRouter by default). */
   function levelSet({ force = false, open = false } = {}) {
     if (S.ls.running) { if (open) showProfile(); return; }
-    const { messages, items } = M.levelSetMessages(allBoards(), S.profile, S.notes);
+    const { messages, items } = M.levelSetMessages(shareable(allBoards()), S.profile, S.notes);
     if (!items.length) { if (open) showProfile(); return; }
     const hash = M.evidenceHash(items, S.notes);
     const notesRead = S.notes.length;
@@ -1839,7 +1901,7 @@
         job.error = err.message;
         if (board === S.board) renderSummary(true);
       },
-    }, { purpose: 'summary', llm: S.llm });
+    }, llmOpts(board, 'summary'));
     job.cancel = h.cancel;
   }
 
@@ -2036,7 +2098,7 @@
           if (board === S.board && !lessonsShown()) toast('Lessons learned saved with the board.');
         },
         onError(err) { stop(err.message); },
-      }, { purpose: 'summary', llm: S.llm });
+      }, llmOpts(board, 'summary'));
       job.cancel = h.cancel;
     };
     step();
@@ -2184,7 +2246,7 @@
         job.error = err.message;
         shown();
       },
-    }, { purpose: 'summary', llm: S.llm });
+    }, llmOpts(board, 'summary'));
     job.cancel = h.cancel;
   }
 
@@ -2703,6 +2765,7 @@
       learner: $('learner'), learnerProfile: $('learner-profile'), noteList: $('note-list'), noteInput: $('note-input'),
       noteSave: $('note-save'), noteCancel: $('note-cancel'), learnerPrompt: $('learner-prompt-text'), learnerBase: $('learner-base-text'),
       summary: $('summary'), summaryContent: $('summary-content'), summaryBtn: $('btn-summary'), lessonsBtn: $('btn-lessons'), recapBtn: $('btn-recap'),
+      lockBtn: $('btn-lock'),
     });
     // shortcut hints in the static markup are written for a Mac; reword them for this platform
     if (!IS_MAC) {
@@ -2717,6 +2780,7 @@
     dom.fontBtn.addEventListener('click', openFontPanel);
     dom.configBtn.addEventListener('click', showConfig);
     dom.modelSelect.addEventListener('change', onModelMenu);
+    dom.lockBtn.addEventListener('click', () => toggleConfidential());
     dom.levelBtn.addEventListener('click', () => toggleLearner());
     $('learner-close').addEventListener('click', () => toggleLearner(false));
     dom.summaryBtn.addEventListener('click', () => toggleSummary());
@@ -2788,7 +2852,7 @@
     let font = DEFAULT_FONT;
     try { font = localStorage.getItem('ee.font') || font; } catch (e) { /* ignore */ }
     if (!FONTS.includes(font)) font = DEFAULT_FONT; // a face from another platform
-    try { S.llm = localStorage.getItem('ee.llm') || ''; } catch (e) { /* ignore */ }
+    try { S.llm = localStorage.getItem('ee.llm') || ''; S.localLlm = localStorage.getItem('ee.llm.local') || ''; } catch (e) { /* ignore */ }
     setFont(font);
     if (savedZoom() !== 1) zoom(null, savedZoom());
     if (document.fonts) document.fonts.ready.then(scheduleOverlay);
@@ -2818,6 +2882,7 @@
         levelset: () => levelSet({ force: true, open: true }), profile: () => toggleLearner(), summary: () => toggleSummary(),
         lessons: () => toggleLessons(), recap: () => toggleRecap(), openPdf,
         reader: readerStart, readerNext: () => readerStep(1), readerPrev: () => readerStep(-1),
+        confidential: () => toggleConfidential(),
       };
       if (cmds[name]) cmds[name]();
     },
@@ -2885,6 +2950,7 @@
     drawOverlay, findCardEl, levelSet, showProfile, toggleLearner, learnerContext, evidenceState, submitNote, removeNote,
     toggleSummary, writeSummary, summaryState, toggleLessons, updateLessons, lessonsShown, toggleRecap, writeRecap, recapShown, recapState, jumpToQuestion, drawDiagram, addDiagram, diagramsOn,
     openPaper, importPaperFile, paperOf, revealPaperAnchor, readPara, readerStep, readerStart, readFrom,
+    toggleConfidential, llmOpts,
   };
   document.addEventListener('DOMContentLoaded', boot);
 })();

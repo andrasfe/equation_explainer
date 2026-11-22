@@ -135,6 +135,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
   color: inherit; font: inherit; padding: 0; max-width: 300px; text-overflow: ellipsis; cursor: pointer;
 }
 .status .caret { margin-left: -4px; font-size: 10px; pointer-events: none; }
+/* confidential board: LM Studio only. The lock is drawn in chalk (no colour emoji), the model pill turns blue */
+.top-btn.lock { filter: grayscale(1) brightness(1.6); opacity: 0.55; font-size: 13px; }
+.top-btn.lock:hover { opacity: 1; }
+.top-btn.lock.on { opacity: 1; border-color: rgba(156,207,238,0.55); }
+.status.local { color: var(--blue); border-color: rgba(156,207,238,0.35); }
+.status.local .dot { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
 .status-info { background: none; border: none; color: inherit; padding: 0 0 0 2px; font-size: 13px; cursor: pointer; }
 .status-info:hover { color: var(--chalk); }
 

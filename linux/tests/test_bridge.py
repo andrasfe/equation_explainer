@@ -249,9 +249,18 @@ def test_dispatch_replies_on_the_main_thread(model):
 
 
 def test_menu_and_shortcuts_parse():
-    from gi.repository import Gtk
+    from gi.repository import Gio, Gtk
     application = app.EEApplication(None)
-    assert application.board_menu().get_n_items() == 7
+    menu = application.board_menu()
+    assert menu.get_n_items() == 8
+    application.set_flags(Gio.ApplicationFlags.NON_UNIQUE)
+    assert application.register(None)  # runs do_startup, which registers the actions
+    named = {menu.get_item_link(i, "section").get_item_attribute_value(j, "action", None).get_string()
+             for i in range(menu.get_n_items()) for j in range(menu.get_item_link(i, "section").get_n_items())}
+    assert {"app.recap", "app.reader", "app.reader-next", "app.reader-prev", "app.confidential"} <= named
+    missing = [a for a in named if not application.lookup_action(a.removeprefix("app."))]
+    assert not missing, missing  # every menu item does something
+    assert {a for _, a in app.SHORTCUTS} <= {a.removeprefix("app.") for a in named}
     for accel, _ in app.SHORTCUTS:
         assert Gtk.ShortcutTrigger.parse_string(accel) is not None, accel
     assert app.rel_time(time.time() - 10) == "just now"

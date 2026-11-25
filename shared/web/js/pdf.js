@@ -118,6 +118,7 @@ EE.pdf = (() => {
 
   // ------------------------------------------------------------ paragraphs (for reading the paper one at a time)
   const paras = new Map(); // file -> Promise<paragraph[]>
+  const fullText = new Map(); // file -> the visible text of each page's text layer (what paragraph offsets point into)
   const HEADING = /^((\d+(\.\d+)*\.?|[IVX]+\.|[A-Z]\.)\s+[A-Z][a-z]|(abstract|introduction|background|preliminaries|related work|methods?|results|discussion|conclusions?|summary|outlook|acknowledg(e)?ments?|references|bibliography|appendix)\b)/i;
   const BACK = /^(\d+\.?\s+)?(references|bibliography)\b/i;
   const ENDS = /[.!?:]["'’”)\]]*$/;
@@ -143,12 +144,97 @@ EE.pdf = (() => {
           lines.push(pageLines(n, tc.items.filter((it) => it.str !== undefined), tl.textDivs, layer, sizes[n - 1].h));
           fulls.push(EE.anchors.visibleText(layer));
         }
+        fullText.set(file, fulls);
         return segment(lines, fulls);
       });
       p.catch(() => paras.delete(file));
       paras.set(file, p);
     }
     return paras.get(file);
+  }
+
+  // ------------------------------------------------------------ passages (the unit the reader explains)
+  // A paragraph is often a sentence or two, too little to explain on its own, and a whole section too much. A passage is
+  // a run of paragraphs that belong together, cut where the cuts cost least overall (dynamic programming over the cut
+  // points). A cut costs more when the passages around it are far from TARGET characters, when the next paragraph leans
+  // on the one before (it opens with "This", "Thus", "For example", in lower case, or the one before ends with a colon),
+  // and when the two sides share vocabulary (TextTiling: the same content words on both sides means the same topic). It
+  // costs less at a section heading, and a passage that runs past a heading pays for it. The title block before the
+  // first real paragraph and the references after the text are never mixed in.
+  const TARGET = 1500, MAX = 2800;
+  const CUE = /^(this|these|that|those|thus|hence|therefore|however|but|so|then|here|there|it|its|they|such|similarly|likewise|moreover|furthermore|in (particular|other words|this|that|fact|turn|addition|contrast)|for (example|instance|this)|note|as a (result|consequence)|consequently|finally|also|indeed|again|now|next|conversely|instead|otherwise|specifically|namely|i\.e\.|e\.g\.)\b/i;
+  const STOP = new Set(('which their there these those would could should about other where while being been have from with that this into ' +
+    'than then them they also more most such only over some very what when each many much made make just like used uses using upon both ' +
+    'does done well even onto within without between because through during before after under above again further given gives same ' +
+    'show shows shown thus hence therefore however since will shall must here first second third case cases number following').split(' '));
+  const vocab = (t) => new Set((t.toLowerCase().match(/[a-z][a-z-]{3,}/g) || []).filter((w) => !STOP.has(w)));
+  const overlap = (a, b) => { let n = 0; for (const w of a) if (b.has(w)) n++; return n / Math.sqrt(Math.max(1, a.size * b.size)); };
+
+  /** The first paragraph of the text proper, past the title block (title, authors, affiliations). */
+  const leadOf = (ps) => Math.max(0, ps.findIndex((p) => p.text.length >= 250 || /^(abstract|summary)\b/i.test(p.text)));
+
+  /** Paragraphs [{text, head, back, ...}] → passages: [[from, to], …] (paragraph indexes, inclusive). */
+  function group(ps) {
+    const n = ps.length;
+    if (!n) return [];
+    const len = ps.map((p) => p.text.length);
+    const words = ps.map((p) => vocab(p.text));
+    const union = (i, j) => { const u = new Set(); for (let k = Math.max(0, i); k < Math.min(n, j); k++) for (const w of words[k]) u.add(w); return u; };
+    const lead = leadOf(ps);
+    const newHead = (j) => j > 0 && (ps[j].head || '') !== (ps[j - 1].head || '');
+    const wall = (j) => j === lead || (j > 0 && !!ps[j].back !== !!ps[j - 1].back); // a cut that must be made
+    // what it costs to cut before paragraph j
+    const cut = [0];
+    for (let j = 1; j < n; j++) {
+      let c = 0;
+      if (newHead(j)) c -= 0.4;
+      if (CUE.test(ps[j].text) || /^[a-z(,;]/.test(ps[j].text)) c += 0.6;
+      if (/:\s*$/.test(ps[j - 1].text)) c += 1;
+      if (len[j - 1] < 200 && !newHead(j)) c += 0.3; // a short paragraph usually leads into the next
+      c += 2 * overlap(union(j - 2, j), union(j, j + 2)); // two paragraphs either side
+      cut.push(c);
+    }
+    const size = (l) => { const x = (l - TARGET) / TARGET; return x * x + (l > MAX ? 4 + (4 * (l - MAX)) / TARGET : 0); };
+    const best = new Array(n + 1).fill(Infinity), from = new Array(n + 1).fill(0);
+    best[0] = 0;
+    for (let j = 1; j <= n; j++) {        // a passage ends with paragraph j - 1 …
+      let l = 0, heads = 0;
+      for (let i = j - 1; i >= 0; i--) {  // … and starts with paragraph i
+        l += len[i] + 2;
+        if (i < j - 1 && wall(i + 1)) break;
+        if (i < j - 1 && newHead(i + 1)) heads++;
+        if (l > MAX * 2 && i < j - 1) break;
+        const c = best[i] + size(l) + 0.8 * heads + (i > 0 ? cut[i] : 0);
+        if (c < best[j]) { best[j] = c; from[j] = i; }
+      }
+    }
+    const out = [];
+    for (let j = n; j > 0; j = from[j]) out.unshift([from[j], j - 1]);
+    return out;
+  }
+
+  /** The paper in passages: [{page, start, end, text, head, back, front, parts, from, to}], like paragraphs, plus the
+   *  paragraphs (from…to) each one covers; front is the title block. text keeps the paragraph breaks. */
+  const passageCache = new Map();
+  function passages(file) {
+    if (!passageCache.has(file)) {
+      const p = paragraphs(file).then((ps) => group(ps).map(([a, z]) => {
+        const parts = [];
+        for (const x of ps.slice(a, z + 1).flatMap((q) => q.parts)) {
+          const at = parts[parts.length - 1];
+          if (at && at.page === x.page && x.start >= at.end && x.start - at.end <= 3) {
+            at.end = x.end; // paragraphs that follow on: one range, its text cut from the page like any other
+            at.text = fullText.get(file)[x.page - 1].slice(at.start, at.end).replace(/\s+/g, ' ').trim();
+          } else parts.push({ ...x });
+        }
+        const f = ps[a];
+        return { page: f.page, start: parts[0].start, end: parts[0].end, text: ps.slice(a, z + 1).map((q) => q.text).join('\n\n'),
+          head: f.head, back: f.back, front: z < leadOf(ps), parts, from: a, to: z };
+      }));
+      p.catch(() => passageCache.delete(file));
+      passageCache.set(file, p);
+    }
+    return passageCache.get(file);
   }
 
   /** The printed lines of a page: [{page, s, e, text, x0, x1, y, size}], running heads, page numbers and turned text left out. */
@@ -248,6 +334,8 @@ EE.pdf = (() => {
       const isHead = (b) => {
         const t = text(b);
         return t.length < 100 && !ENDS.test(t.replace(/\.$/, '')) && !/^[a-z]/.test(t) && letters(t) > 0.6 &&
+          // "A. Barenco, C. H. Bennett, …", "E. Post (1936), …": a reference or a citation, not a heading
+          !/^[A-Z]\.\s+[A-Z][\w'’-]+,/.test(t) && !/\((19|20)\d\d[a-z]?\)/.test(t) && !(back && /^[A-Z]\.\s/.test(t)) &&
           (HEADING.test(t) || (b.lines[0].size > body * 1.08 && t.length < 70 && b.lines.length <= 2));
       };
       const merged = [];
@@ -482,5 +570,5 @@ EE.pdf = (() => {
     };
   }
 
-  return { open, mount, pageTexts, textNow, titleOf, paragraphs };
+  return { open, mount, pageTexts, textNow, titleOf, paragraphs, passages, group };
 })();

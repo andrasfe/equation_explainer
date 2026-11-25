@@ -52,12 +52,12 @@ The student is asking about the paper as a whole. Answer from the paper's text b
 
   const PAPER_READ = String.raw`
 
-The student is reading the paper with you one paragraph at a time; this is the paragraph you are on. Explain it in more detail and in easier terms than the paper does:
-1. Start with its point, in one or two plain sentences.
-2. Then go through it idea by idea: unpack the jargon, define every symbol, fill in the steps the authors skip, write any formula properly in LaTeX and say what it means, and add a small example or an intuition where it helps.
+The student is reading the paper with you one passage at a time (a few paragraphs that belong together); this is the passage you are on. Explain it in more detail and in easier terms than the paper does:
+1. Start with its point, in one or two plain sentences: what this stretch of the paper is doing.
+2. Then go through it idea by idea, in the paper's order: unpack the jargon, define every symbol, fill in the steps the authors skip, write any formula properly in LaTeX and say what it means, and add a small example or an intuition where it helps. Where the passage moves to a new step or a new paragraph, say how it connects to the one before.
 3. Say briefly how it follows from what came before and why it is there.
-The paragraph's text comes from the PDF, so symbols may be missing or garbled; restore them from the context and the page without remarking on it.
-Stay with this paragraph. The next one comes when the student moves on, so do not explain what follows it. If it is only a heading, a caption, a list of references or a stray formula, say so in a line or two. Afterwards the student may ask about it; answer those questions, still about this paragraph.`;
+The passage's text comes from the PDF, so symbols may be missing or garbled; restore them from the context and the page without remarking on it.
+Stay with this passage. The next one comes when the student moves on, so do not explain what follows it. If it is only a heading, a caption, a list of references or a stray formula, say so in a line or two. Afterwards the student may ask about it; answer those questions, still about this passage.`;
 
   /** Page number of a paper anchor ("pdf:3" -> 3); null for the whole paper or an answer. */
   const pageOf = (cardId) => { const m = /^pdf:(\d+)$/.exec(cardId || ''); return m ? Number(m[1]) : null; };
@@ -66,6 +66,8 @@ Stay with this paragraph. The next one comes when the student moves on, so do no
    *  (anchor.parts, each {cardId, start, end, quote}); anything else is its own single piece. */
   const pieces = (a) => (!a ? [] : a.parts && a.parts.length ? a.parts : [a]);
   /** The pages an anchor covers, for people: "3" or "3–4". */
+  /** What the reader calls the unit an anchor reads: "passage", or "paragraph" on boards read before passages. */
+  const unitOf = (a) => (a && a.unit === 'passage' ? 'passage' : 'paragraph');
   const pagesLabel = (a) => {
     const ns = [...new Set(pieces(a).map((x) => pageOf(x.cardId)).filter(Boolean))];
     return ns.length > 1 ? `${ns[0]}–${ns[ns.length - 1]}` : String(ns[0] || '');
@@ -348,7 +350,7 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
       if (card.role === 'user') {
         const q = byCard.get(card.id);
         const pg = t.anchor && pageOf(t.anchor.cardId);
-        const what = q.side && isPaperAnchor(t.anchor) && t.anchor.para != null ? `paragraph ${t.anchor.para + 1} of the paper, read together (p. ${pagesLabel(t.anchor) || pg}): "${truncate(clean(t.anchor.quote || ''), 160)}"`
+        const what = q.side && isPaperAnchor(t.anchor) && t.anchor.para != null ? `${unitOf(t.anchor)} ${t.anchor.para + 1} of the paper, read together (p. ${pagesLabel(t.anchor) || pg}): "${truncate(clean(t.anchor.quote || ''), 160)}"`
           : q.side && isPaperAnchor(t.anchor) ? (pg ? `question about a passage of the paper (p. ${pg}): "${truncate(clean(t.anchor.quote || ''), 160)}"` : 'question about the whole paper')
           : q.side ? `side question about "${truncate(clean((t.anchor && (t.anchor.llmText || t.anchor.quote)) || ''), 160)}"`
           : !t.parentId && k === 0 ? 'main question' : 'follow-up';
@@ -451,6 +453,7 @@ Be concise: a high-level reference the student can review in a few minutes. No p
           quote: side && t.anchor ? (isPaperAnchor(t.anchor) && !pageOf(t.anchor.cardId) ? 'the whole paper' : t.anchor.quote || '') : '',
           page: side && t.anchor ? (t.anchor.parts ? pagesLabel(t.anchor) : pageOf(t.anchor.cardId)) : null,
           para: side && t.anchor && t.anchor.para != null ? t.anchor.para : null,
+          unit: side && t.anchor && t.anchor.para != null ? unitOf(t.anchor) : null,
         });
       });
     }
@@ -482,7 +485,7 @@ Be concise: a high-level reference the student can review in a few minutes. No p
     const lines = [];
     for (const it of batch) {
       const what = !it.side ? 'question'
-        : it.para != null ? `paragraph ${it.para + 1} of the paper, read together (p. ${it.page}): "${truncate(clean(it.quote), 160)}"`
+        : it.para != null ? `${it.unit || 'paragraph'} ${it.para + 1} of the paper, read together (p. ${it.page}): "${truncate(clean(it.quote), 160)}"`
         : it.page ? `question about a passage of the paper (p. ${it.page}): "${truncate(clean(it.quote), 160)}"`
         : `side question about "${truncate(clean(it.quote), 160)}"`;
       lines.push(`- ${what}: ${truncate(it.q, 600)}`, `  answer: ${condense(it.answer, cap)}`);
@@ -585,8 +588,9 @@ Be concise: a high-level reference the student can review in a few minutes. No p
       if (!n) return 'Question about the whole paper:\n\n';
       if (anchor.para != null) {
         const pp = pagesLabel(anchor);
-        let r = `Paragraph ${anchor.para + 1}${anchor.of ? ` of ${anchor.of}` : ''} of the paper (${pp.includes('–') ? `pages ${pp}, over the page break` : `page ${n}`}${anchor.head ? `, under "${anchor.head}"` : ''}):\n> ${anchor.llmText.replace(/\n/g, '\n> ')}\n`;
-        if (anchor.before) r += `\n(The paragraph before it, which we have read: "${anchor.before}")\n`;
+        const u = unitOf(anchor);
+        let r = `${u[0].toUpperCase() + u.slice(1)} ${anchor.para + 1}${anchor.of ? ` of ${anchor.of}` : ''} of the paper (${pp.includes('–') ? `pages ${pp}` : `page ${n}`}${anchor.head ? `, under "${anchor.head}"` : ''}):\n> ${anchor.llmText.replace(/\n/g, '\n> ')}\n`;
+        if (anchor.before) r += `\n(The ${u} before it, which we have read: "${anchor.before}")\n`;
         return r + '\n';
       }
       let p = `Question about this passage of the paper (page ${n}):\n> ${anchor.llmText.replace(/\n/g, '\n> ')}\n`;

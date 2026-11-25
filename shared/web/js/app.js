@@ -52,7 +52,7 @@
     { q: 'Why is this true?', mode: 'explain' },
     { q: 'Give a concrete numerical example.', mode: 'explain' },
     { q: 'How does this fit into the rest of the paper?', mode: 'explain' },
-    { q: '¶ Read on from here, paragraph by paragraph', read: true },
+    { q: '¶ Read on from here, passage by passage', read: true },
   ];
   const CHIPS = [
     { q: 'How did you get to this?', mode: 'explain' },
@@ -665,7 +665,7 @@
           el('button', { class: 'col-title chalk-title', 'data-act': 'rename-board', title: `Rename board (${b.pdf.name})` }, EE.util.texToText(b.title) || b.pdf.name),
           el('span', { class: 'spacer' }),
           el('span', { class: 'col-meta' }, meta),
-          el('button', { class: 'icon-btn paper-read', 'data-act': 'reader-start', title: kbd('Read the paper with me, one paragraph at a time (⇧⌘P)') }, '¶ read'),
+          el('button', { class: 'icon-btn paper-read', 'data-act': 'reader-start', title: kbd('Read the paper with me, a passage (a few paragraphs that belong together) at a time (⇧⌘P)') }, '¶ read'),
           el('button', { class: 'icon-btn paper-look', 'data-act': 'paper-look', title: S.paperLook === 'chalk' ? 'Show the paper as printed, black on white' : 'Chalk it onto the slate' },
             S.paperLook === 'chalk' ? '☐ paper' : '▨ chalk'));
         c.tag = null;
@@ -957,7 +957,7 @@
         : m === 'compute'
           ? 'Type a matrix or an expression to compute, e.g. (H⊗H)·CNOT·(H⊗H)'
           : isRoot ? 'Write an equation or a question…'
-            : isReadThread(S.board.threads[threadId]) ? 'Ask about this paragraph…' : 'Follow up on this side question…';
+            : isReadThread(S.board.threads[threadId]) ? 'Ask about this passage…' : 'Follow up on this side question…';
       readerNav(nav, threadId);
       hint.textContent = m === 'python' ? kbd('⌘ + enter runs it') : 'enter writes · shift + enter for a new line';
     }
@@ -1101,7 +1101,7 @@
     return d;
   }
 
-  /** A chalk bracket down the left margin of a paragraph (the one being read). */
+  /** A chalk bracket down the left margin of a passage (the one being read). */
   function roughBracket(x, top, bot, seed) {
     const rnd = rng(seed ^ 0x51ed27);
     const j = () => (rnd() - 0.5) * 2.2;
@@ -1157,7 +1157,7 @@
       const seed = hash(t.id);
       const clipId = 'clip' + i;
       svg += `<clipPath id="${clipId}"><rect x="${vis.left - st.left - 14}" y="${vis.top - st.top}" width="${vis.width + 28}" height="${vis.height}"/></clipPath>`;
-      // each piece of the anchor (one per page for a paragraph over a page break); the link starts at the first in view
+      // each piece of the anchor (a passage has one per page, and per run of text); the link starts at the first in view
       const boxes = M.pieces(t.anchor).map((a) => {
         const ce = anchorEl(pc, a.cardId);
         const range = ce && A.rangeFor(ce.querySelector(BODY), a);
@@ -1270,7 +1270,7 @@
     const body = elOf(pos.startContainer) && elOf(pos.startContainer).closest(BODY);
     if (!body) return null;
     const cardId = body.closest('[data-card]').dataset.card;
-    // a passage highlighted inside a paragraph being read wins over the paragraph
+    // a passage highlighted inside the one being read wins over it
     const ps = M.piecesOn(S.board, cardId).sort((x, y) => (x.t.anchor.para != null) - (y.t.anchor.para != null));
     for (const { t, a } of ps) {
       const r = A.rangeFor(body, a);
@@ -2438,22 +2438,23 @@
     return { root, ta: input, sync() { readerRow(reading); }, insert(text) { input.value += text; input.focus(); } };
   }
 
-  // ------------------------------------------------------------ reading the paper paragraph by paragraph
-  // Each paragraph read is a side question anchored on that paragraph (anchor.para = its index), so it is circled on
-  // the paper, saved with the board, and part of the summary, the lessons and the recap like any other side question.
-  // board.reader = {at, n} remembers where the reading is.
-  const READ_Q = 'Walk me through this paragraph.';
+  // ------------------------------------------------------------ reading the paper passage by passage
+  // The unit is a passage: a few paragraphs that belong together (EE.pdf.passages). Each one read is a side question
+  // anchored on it (anchor.para = its index, anchor.unit = 'passage'; boards read before kept single paragraphs), so it
+  // is marked on the paper, saved with the board, and part of the summary, the lessons and the recap like any other
+  // side question. board.reader = {at, n, unit} remembers where the reading is.
+  const READ_Q = 'Walk me through this passage.';
   const isReadThread = (t) => !!(t && t.parentId === 'root' && t.anchor && t.anchor.para != null);
-  let readerLoading = null; // file whose paragraphs are being found
+  let readerLoading = null; // file whose passages are being found
 
-  /** The thread that reads paragraph i (by its text, should the paragraphs have been found differently before). */
+  /** The thread that reads passage i (by its text, should the passages have been found differently before). */
   function readerThread(board, p, i) {
     const ts = Object.values(board.threads).filter(isReadThread);
     return ts.find((t) => t.anchor.para === i && t.anchor.quote === p.text)
       || ts.find((t) => t.anchor.cardId === 'pdf:' + p.page && t.anchor.quote === p.text) || null;
   }
 
-  /** Go to paragraph i: open it if it has been read, else read it (the model explains it in a column to the right). */
+  /** Go to passage i: open it if it has been read, else read it (the model explains it in a column to the right). */
   async function readPara(i) {
     const b = S.board;
     if (!b || !b.pdf || readerLoading) return null;
@@ -2461,9 +2462,9 @@
     readerLoading = b.pdf.file;
     render();
     try {
-      ps = await P.paragraphs(b.pdf.file);
+      ps = await P.passages(b.pdf.file);
     } catch (e) {
-      toast('Could not find the paragraphs of this paper: ' + e.message, 'error');
+      toast('Could not find the passages of this paper: ' + e.message, 'error');
       return null;
     } finally {
       readerLoading = null;
@@ -2471,24 +2472,23 @@
     }
     if (b !== S.board) return null;
     if (!ps.length) { toast('There is no text in this paper to read (is it a scan?).', 'error'); return null; }
-    if (i >= ps.length) { toast('That was the last paragraph of the paper.'); return null; }
+    if (i >= ps.length) { toast('That was the last passage of the paper.'); return null; }
     i = Math.max(0, i);
     const p = ps[i];
-    b.reader = { at: i, n: ps.length };
+    b.reader = { at: i, n: ps.length, unit: 'passage', skip: skipList(b, ps) };
     let t = readerThread(b, p, i);
     if (t) {
-      t.anchor.para = i;
-      t.anchor.of = ps.length;
+      Object.assign(t.anchor, { para: i, of: ps.length, unit: 'passage' });
       openThread(t.id);
       return t;
     }
     const prev = ps[i - 1];
     const before = prev ? (prev.text.length > 700 ? '…' + prev.text.slice(-700) : prev.text) : '';
     const anchor = { cardId: 'pdf:' + p.page, start: p.start, end: p.end, quote: p.text, llmText: p.text, partial: [], context: '',
-      page: p.page, para: i, of: ps.length, head: p.head || '', before };
-    // over a page break: one piece per page, so each page highlights its part; quote and llmText are the whole paragraph
-    if (p.parts && p.parts.length > 1) anchor.parts = p.parts.map((x) => ({ cardId: 'pdf:' + x.page, start: x.start, end: x.end, quote: x.text }));
-    t = M.newThread(b, 'root', anchor, `Paragraph ${i + 1}`);
+      page: p.page, para: i, of: ps.length, unit: 'passage', paras: p.to - p.from + 1, head: p.head || '', before };
+    // one piece per page and per run of text, so each page highlights its part; quote and llmText are the whole passage
+    anchor.parts = p.parts.map((x) => ({ cardId: 'pdf:' + x.page, start: x.start, end: x.end, quote: x.text }));
+    t = M.newThread(b, 'root', anchor, `Passage ${i + 1}`);
     t.cards.push({ id: uid('c'), role: 'user', text: READ_Q, mode: 'explain', createdAt: Date.now() });
     b.openPath = ['root', t.id];
     hidePopover();
@@ -2498,40 +2498,142 @@
     return t;
   }
 
-  /** Start (or pick up) the reading: where it was left, else at the first real paragraph (past the title and authors). */
+  /** Where the reading is, as a passage index. A board read paragraph by paragraph before picks up at the passage
+   *  holding the paragraph it had got to. */
+  async function readerAt(b) {
+    const r = b.reader;
+    if (!r) return null;
+    if (r.unit === 'passage') return r.at;
+    try {
+      const qs = await P.passages(b.pdf.file);
+      const k = qs.findIndex((q) => q.from <= r.at && r.at <= q.to);
+      return k < 0 ? 0 : k;
+    } catch (e) { return 0; }
+  }
+
+  /** Start (or pick up) the reading: where it was left, else at the first passage past the title and authors. */
   async function readerStart() {
     const b = S.board;
     if (!b) return;
-    if (!b.pdf) { toast(kbd('Open a PDF paper first (⌘O); the reader goes through it paragraph by paragraph.')); return; }
-    if (b.reader) { readPara(b.reader.at); return; }
+    if (!b.pdf) { toast(kbd('Open a PDF paper first (⌘O); the reader goes through it a passage at a time.')); return; }
+    if (b.reader) { readPara(await readerAt(b)); return; }
     let ps = [];
-    try { ps = await P.paragraphs(b.pdf.file); } catch (e) { /* readPara reports it */ }
-    const first = ps.findIndex((p) => p.text.length >= 250 || /^(abstract|summary)\b/i.test(p.text));
-    readPara(Math.max(0, first));
+    try { ps = await P.passages(b.pdf.file); } catch (e) { /* readPara reports it */ }
+    const skip = new Set(skipList(b, ps));
+    const keys = sectionKeys(ps);
+    readPara(Math.max(0, ps.findIndex((p, k) => !skip.has(keys[k]))));
   }
 
-  /** The next (d = 1) or previous (d = -1) paragraph, from the one open on the right or where the reading is. */
-  function readerStep(d) {
+  /** The next (d = 1) or previous (d = -1) passage, from the one open on the right or where the reading is. */
+  async function readerStep(d) {
     const b = S.board;
     if (!b || !b.pdf) return;
     const open = b.threads[b.openPath[1]];
     if (!b.reader && !isReadThread(open)) { readerStart(); return; }
-    const at = isReadThread(open) ? open.anchor.para : b.reader.at;
-    if (at + d < 0) { toast('This is the first paragraph.'); return; }
-    readPara(at + d);
+    // (a paragraph read before passages were the unit: go on from the passage that holds it)
+    const at = isReadThread(open) && open.anchor.unit === 'passage' ? open.anchor.para : await readerAt(b) ?? 0;
+    let ps;
+    try { ps = await P.passages(b.pdf.file); } catch (e) { readPara(at + d); return; }
+    // sections marked to skip are passed over
+    const skip = new Set(skipList(b, ps));
+    const keys = sectionKeys(ps);
+    let j = at + d;
+    while (j >= 0 && j < ps.length && skip.has(keys[j])) j += d;
+    if (j < 0) { toast(at + d < 0 ? 'This is the first passage.' : 'There is nothing before this but sections you skip.'); return; }
+    if (j >= ps.length) { toast(at + d >= ps.length ? 'That was the last passage of the paper.' : 'The rest of the paper is in sections you skip.'); return; }
+    readPara(j);
   }
 
-  /** "Read on from here" on a highlighted passage: the paragraph it is in. */
+  // ------------------------------------------------------------ skipping sections
+  // A section is the run of passages under one heading. board.reader.skip lists the ones to pass over (by heading):
+  // the title block, acknowledgements and references to begin with, and any the student already knows or finds trivial.
+  const TRIVIAL = /^(\d+\.?\s+)?(acknowledg(e)?ments?|references|bibliography|funding|author contributions|competing interests|data availability)\b/i;
+  const FRONT = '(title and authors)';
+  const sectionKey = (q) => (q.front ? FRONT : /^[^\n]{0,60}?\b(Abstract|ABSTRACT)[.:—-]?\s+[A-Z]/.test(q.text) ? 'Abstract' : q.head || '(before the first heading)');
+  // a theorem, a proof, a lemma … is part of the section it is in
+  const PART = /^[\s.]*(theorem|lemma|proof|corollary|definition|proposition|remark|example|claim|conjecture)\b/i;
+  /** The sections of the paper: [{key, from, to}] (passage indexes, inclusive). */
+  function sectionsOf(ps) {
+    const out = [];
+    ps.forEach((q, i) => {
+      const last = out[out.length - 1];
+      const k = last && !q.front && PART.test(q.head || '') ? last.key : sectionKey(q);
+      if (last && last.key === k) last.to = i; else out.push({ key: k, from: i, to: i });
+    });
+    return out;
+  }
+  /** The section each passage is in, by index. */
+  const sectionKeys = (ps) => sectionsOf(ps).flatMap((x) => Array(x.to - x.from + 1).fill(x.key));
+  const skipList = (b, ps) => (b.reader && Array.isArray(b.reader.skip) ? b.reader.skip
+    : sectionsOf(ps).map((x) => x.key).filter((k) => k === FRONT || TRIVIAL.test(k)));
+  function setSkip(b, ps, key, on) {
+    const skip = new Set(skipList(b, ps));
+    if (on) skip.add(key); else skip.delete(key);
+    b.reader = { ...(b.reader || { at: 0, n: ps.length, unit: 'passage' }), skip: [...skip] };
+    save(b);
+    render();
+  }
+
+  /** "Skip this section": mark the section of the passage being read and go on to the next one not skipped. */
+  async function readerSkip() {
+    const b = S.board;
+    if (!b || !b.pdf) return;
+    let ps;
+    try { ps = await P.passages(b.pdf.file); } catch (e) { toast('Could not find the passages of this paper: ' + e.message, 'error'); return; }
+    const open = b.threads[b.openPath[1]];
+    const at = isReadThread(open) && open.anchor.unit === 'passage' ? open.anchor.para : (await readerAt(b)) ?? 0;
+    const sec = sectionsOf(ps).find((x) => x.from <= at && at <= x.to);
+    if (!sec) return;
+    setSkip(b, ps, sec.key, true);
+    const skip = new Set(skipList(b, ps));
+    const keys = sectionKeys(ps);
+    let j = sec.to + 1;
+    while (j < ps.length && skip.has(keys[j])) j++;
+    toast(`Skipping "${truncate(sec.key, 60)}". Untick it under ¶ sections to read it after all.`);
+    if (j < ps.length) readPara(j);
+  }
+
+  /** The list of sections: tick the ones to skip, or jump to one. */
+  async function showSections() {
+    const b = S.board;
+    if (!b || !b.pdf) return;
+    let ps;
+    try { ps = await P.passages(b.pdf.file); } catch (e) { toast('Could not find the passages of this paper: ' + e.message, 'error'); return; }
+    const read = new Set(Object.values(b.threads).filter((t) => isReadThread(t) && t.anchor.unit === 'passage' && t.cards.length > 1).map((t) => t.anchor.para));
+    const at = b.reader && b.reader.unit === 'passage' ? b.reader.at : -1;
+    let close;
+    const rows = sectionsOf(ps).map((sec) => {
+      const n = sec.to - sec.from + 1;
+      let done = 0;
+      for (let i = sec.from; i <= sec.to; i++) if (read.has(i)) done++;
+      const box = el('input', { type: 'checkbox' });
+      box.checked = skipList(b, ps).includes(sec.key);
+      const row = el('div', { class: 'section-row' + (box.checked ? ' skipped' : '') + (at >= sec.from && at <= sec.to ? ' here' : '') },
+        el('label', { class: 'section-skip', title: 'Skip this section when reading on' }, box, el('span', { class: 'small muted' }, 'skip')),
+        el('span', { class: 'section-name' }, sec.key),
+        el('span', { class: 'section-meta small muted' }, `${n} passage${n === 1 ? '' : 's'} · p. ${ps[sec.from].page}${done ? ` · ${done === n ? 'read' : `${done} read`}` : ''}`),
+        el('button', { class: 'chalk-btn small', title: 'Read from the start of this section', onclick: () => { close(); readPara(sec.from); } }, 'read →'));
+      box.addEventListener('change', () => { setSkip(b, ps, sec.key, box.checked); row.classList.toggle('skipped', box.checked); });
+      return row;
+    });
+    close = modal(el('div', {},
+      el('h2', { class: 'chalk-title modal-title' }, 'sections'),
+      el('p', { class: 'muted small' }, 'Tick what you already know or find trivial: next and previous pass over it. A passage you open yourself is read all the same.'),
+      el('div', { class: 'sections-list' }, rows),
+      el('div', { class: 'modal-actions' }, el('button', { class: 'chalk-btn primary', onclick: () => close() }, 'done'))), 'sections-modal');
+  }
+
+  /** "Read on from here" on a highlighted passage: the passage it is in. */
   async function readFrom(anchor) {
     const b = S.board;
     const n = anchor && M.pageOf(anchor.cardId);
     if (!b || !b.pdf || !n) return;
     hidePopover();
     let ps;
-    try { ps = await P.paragraphs(b.pdf.file); } catch (e) { toast('Could not find the paragraphs of this paper: ' + e.message, 'error'); return; }
-    let i = ps.findIndex((p) => (p.parts || [p]).some((x) => x.page === n && anchor.start < x.end && anchor.end > x.start));
+    try { ps = await P.passages(b.pdf.file); } catch (e) { toast('Could not find the passages of this paper: ' + e.message, 'error'); return; }
+    let i = ps.findIndex((p) => p.parts.some((x) => x.page === n && anchor.start < x.end && anchor.end > x.start));
     if (i < 0) i = ps.findIndex((p) => p.page >= n);
-    if (i < 0) { toast('No paragraph found there.'); return; }
+    if (i < 0) { toast('No passage found there.'); return; }
     readPara(i);
   }
 
@@ -2544,20 +2646,22 @@
     if (row._sig === sig) return;
     row._sig = sig;
     row.hidden = false;
-    if (readerLoading === b.pdf.file) { row.replaceChildren(el('span', { class: 'chalk-dots muted' }, 'finding the paragraphs')); return; }
+    if (readerLoading === b.pdf.file) { row.replaceChildren(el('span', { class: 'chalk-dots muted' }, 'finding the passages')); return; }
     if (!r) {
-      row.replaceChildren(el('button', { class: 'chalk-btn small primary', 'data-act': 'reader-start', title: kbd('⇧⌘P') }, '¶ read it with me, paragraph by paragraph'));
+      row.replaceChildren(el('button', { class: 'chalk-btn small primary', 'data-act': 'reader-start', title: kbd('⇧⌘P') }, '¶ read it with me, passage by passage'));
       return;
     }
     row.replaceChildren(
-      el('button', { class: 'link-btn reader-pos', 'data-act': 'reader-open', title: 'Back to the paragraph you are on' }, `¶ ${r.at + 1} of ${r.n}`),
+      el('button', { class: 'link-btn reader-pos', 'data-act': 'reader-open', title: 'Back to the passage you are on' }, `¶ ${r.at + 1} of ${r.n}`),
+      el('button', { class: 'link-btn', 'data-act': 'reader-sections', title: 'The sections of the paper: skip the ones you know, or jump to one' },
+        `sections${r.skip && r.skip.length ? ` (${r.skip.length} skipped)` : ''}`),
       el('span', { class: 'spacer' }),
-      el('button', { class: 'chalk-btn small', 'data-act': 'reader-prev', title: kbd('Previous paragraph (⌥⌘[)') }, '←'),
-      el('button', { class: 'chalk-btn small primary', 'data-act': 'reader-next', title: kbd('Next paragraph (⌥⌘])') }, 'next ¶ →'),
-      el('button', { class: 'icon-btn', 'data-act': 'reader-stop', title: 'Stop reading (the paragraphs read so far stay on the board)' }, '✕'));
+      el('button', { class: 'chalk-btn small', 'data-act': 'reader-prev', title: kbd('Previous passage (⌥⌘[)') }, '←'),
+      el('button', { class: 'chalk-btn small primary', 'data-act': 'reader-next', title: kbd('Next passage (⌥⌘])') }, 'next ¶ →'),
+      el('button', { class: 'icon-btn', 'data-act': 'reader-stop', title: 'Stop reading (the passages read so far stay on the board)' }, '✕'));
   }
 
-  /** Under a paragraph being read: where it is, and the way on. */
+  /** Under a passage being read: where it is, and the way on. */
   function readerNav(nav, threadId) {
     const b = S.board;
     const t = b && b.threads[threadId];
@@ -2573,9 +2677,10 @@
     nav.replaceChildren(
       el('span', { class: 'reader-pos muted' }, `¶ ${i + 1}${n ? ` of ${n}` : ''} · p. ${M.pagesLabel(t.anchor) || t.anchor.page}`),
       el('span', { class: 'spacer' }),
-      el('button', { class: 'chalk-btn small', 'data-act': 'reader-prev', title: kbd('Previous paragraph (⌥⌘[)'), disabled: i === 0 || undefined }, '← previous'),
-      el('button', { class: 'chalk-btn small' + (busy ? '' : ' primary'), 'data-act': 'reader-next', title: kbd('Next paragraph (⌥⌘])'), disabled: last || undefined },
-        last ? 'last paragraph' : 'next paragraph →'));
+      t.anchor.unit === 'passage' ? el('button', { class: 'chalk-btn small', 'data-act': 'reader-skip', title: `Skip the rest of "${t.anchor.head || 'this section'}": you know it, or it is trivial` }, 'skip section ⤼') : null,
+      el('button', { class: 'chalk-btn small', 'data-act': 'reader-prev', title: kbd('Previous passage (⌥⌘[)'), disabled: i === 0 || undefined }, '← previous'),
+      el('button', { class: 'chalk-btn small' + (busy ? '' : ' primary'), 'data-act': 'reader-next', title: kbd('Next passage (⌥⌘])'), disabled: last || undefined },
+        last ? 'last passage' : 'next passage →'));
   }
 
   /** Pick a PDF: the native open panel in the apps, a file input in the browser harness. */
@@ -2702,6 +2807,8 @@
       case 'reader-start': readerStart(); break;
       case 'reader-next': readerStep(1); break;
       case 'reader-prev': readerStep(-1); break;
+      case 'reader-skip': readerSkip(); break;
+      case 'reader-sections': showSections(); break;
       case 'reader-open': readPara(b.reader ? b.reader.at : 0); break;
       case 'reader-stop': if (b.reader) { delete b.reader; save(b); render(); } break;
       case 'paper-look': setPaperLook(S.paperLook === 'chalk' ? 'paper' : 'chalk'); break;
@@ -2963,7 +3070,7 @@
     drawOverlay, findCardEl, levelSet, showProfile, toggleLearner, learnerContext, evidenceState, submitNote, removeNote,
     toggleSummary, writeSummary, summaryState, toggleLessons, updateLessons, lessonsShown, toggleRecap, writeRecap, recapShown, recapState, jumpToQuestion, drawDiagram, addDiagram, diagramsOn,
     openPaper, importPaperFile, paperOf, revealPaperAnchor, readPara, readerStep, readerStart, readFrom,
-    toggleConfidential, llmOpts,
+    toggleConfidential, llmOpts, readerSkip, showSections,
   };
   document.addEventListener('DOMContentLoaded', boot);
 })();

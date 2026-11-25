@@ -2,7 +2,7 @@
  * exercises the same code paths a person would: prompt → highlight → side
  * question → drill deeper → run Python → compute mode → close back to the
  * original → reload from disk → reopen a branch → summarize the board →
- * draw a circuit diagram → read a PDF paper and ask about a highlighted passage → read it paragraph by paragraph →
+ * draw a circuit diagram → read a PDF paper and ask about a highlighted passage → read it passage by passage →
  * a confidential board that only LM Studio answers.
  * opts.prompt replaces the first question; opts.pdf (a path) replaces the built-in one-page paper.
  */
@@ -595,78 +595,98 @@ EE.selfTest = async function selfTest(opts = {}) {
     return { file: r.file, title: board.title, pages: board.pdf.pages, quote: anchor.quote.slice(0, 60), answer: len, systemChars: sys.length };
   });
 
-  await step('paper reader: one paragraph at a time, explained, a question on it, then the next', async () => {
+  await step('paper reader: a passage at a time, explained, a question on it, the next, a section skipped', async () => {
     app.closeAll();
     const r = opts.pdf ? await B.call('importPdf', { path: opts.pdf }) : await B.call('importPdf', { data: readerPdf(), name: 'selftest-reader.pdf' });
     const board = app.openPaper(r);
     await waitFor(() => document.querySelector('.pdf-page[data-page="1"] .textLayer span'), 60000, 'the paper to render');
     const ps = await EE.pdf.paragraphs(r.file);
+    const qs = await EE.pdf.passages(r.file);
     if (!opts.pdf) {
       assert(ps.length === 4, `the test paper has 4 paragraphs, found ${ps.length}: ` + JSON.stringify(ps.map((p) => p.text.slice(0, 40))));
       assert(ps[0].text.startsWith('Kickback, read slowly 1 Phase kickback A controlled-U') && ps[2].page === 2 && ps[3].head === '2 Why it matters',
         'the paragraphs are not the printed ones: ' + JSON.stringify(ps.map((p) => [p.page, p.head, p.text.slice(0, 50)])));
       assert(ps[1].parts.length === 2 && ps[1].parts[1].page === 2 && /control ends up in the state \(\|0> \+ e/.test(ps[1].text) &&
         ps[1].text.endsWith('kicked back onto the control register.'), 'the paragraph over the page break was cut: ' + JSON.stringify(ps[1]));
-    } else assert(ps.length >= 2, 'no paragraphs found in the paper');
+      // two sections of two paragraphs each: one passage per section
+      assert(qs.length === 2 && qs[0].from === 0 && qs[0].to === 1 && qs[1].from === 2 && qs[1].head === '2 Why it matters',
+        'the passages are not the two sections: ' + JSON.stringify(qs.map((q) => [q.from, q.to, q.head])));
+    } else assert(qs.length >= 2, 'no passages found in the paper');
     const start = document.querySelector('.paper-bar [data-act="reader-start"]');
     assert(start, 'no "read it with me" button under the paper');
     const before = sent.length;
     start.click();
-    await waitFor(() => sent.length > before, 20000, 'the first paragraph to be sent');
+    await waitFor(() => sent.length > before, 20000, 'the first passage to be sent');
     const tid = board.openPath[1];
     const t = board.threads[tid];
-    assert(t && t.anchor.para != null && t.anchor.cardId === 'pdf:' + ps[t.anchor.para].page && board.reader.at === t.anchor.para, 'no thread on the paragraph');
+    const q0 = qs[t.anchor.para];
+    assert(t && t.anchor.unit === 'passage' && t.anchor.cardId === 'pdf:' + q0.page && board.reader.at === t.anchor.para, 'no thread on the passage');
     const first = sent[sent.length - 1].messages;
-    assert(first[0].content.includes('one paragraph at a time'), 'the prompt does not say the paper is read paragraph by paragraph');
-    assert(first[first.length - 1].content.includes(`Paragraph ${t.anchor.para + 1} of ${ps.length}`) &&
-      first[first.length - 1].content.includes(ps[t.anchor.para].text.slice(0, 60)), 'the paragraph is not in the question');
+    const ask1 = first[first.length - 1].content;
+    assert(first[0].content.includes('one passage at a time'), 'the prompt does not say the paper is read passage by passage');
+    assert(ask1.includes(`Passage ${t.anchor.para + 1} of ${qs.length}`) && ask1.includes(ps[q0.from].text.slice(-60)) && ask1.includes(ps[q0.to].text.slice(-60)),
+      'the whole passage is not in the question');
     await idle();
     const len1 = answerOk(lastCard(tid));
-    await waitFor(() => document.querySelector('#overlay .chalk-loop'), 5000, 'the chalk bracket by the paragraph');
+    await waitFor(() => document.querySelector('#overlay .chalk-loop'), 5000, 'the chalk bracket by the passage');
     const hl = (name) => (window.CSS && CSS.highlights && CSS.highlights.get(name) ? CSS.highlights.get(name).size : null); // null: no highlight API
-    assert(hl('ee-anchor-active') !== 0, 'the paragraph is not highlighted on the paper');
+    assert(hl('ee-anchor-active') !== 0, 'the passage is not highlighted on the paper');
+    if (!opts.pdf) {
+      // the first passage runs over the page break: marked on both pages
+      assert(new Set(t.anchor.parts.map((x) => x.cardId)).size === 2 && ask1.includes('pages 1–2'), 'the passage is not on both pages: ' + JSON.stringify(t.anchor.parts));
+      assert(hl('ee-anchor-active') === null || hl('ee-anchor-active') >= 2, 'the passage is not highlighted on both pages: ' + hl('ee-anchor-active'));
+    }
     // a question about it, in the same column
     app.send(tid, 'Why is the phase global for the target but relative for the control?', 'explain');
     await idle();
     answerOk(lastCard(tid));
     const follow = sent[sent.length - 1].messages;
-    assert(follow[0].content.includes('one paragraph at a time') && follow.some((m) => m.role === 'user' && m.content.includes(ps[t.anchor.para].text.slice(0, 60))),
-      'the follow-up lost the paragraph');
+    assert(follow[0].content.includes('one passage at a time') && follow.some((m) => m.role === 'user' && m.content.includes(ps[q0.from].text.slice(0, 60))),
+      'the follow-up lost the passage');
     await settle();
     await snap('13-reader');
-    // the next paragraph: a new column, knowing what came before; the first one stays as it was
+    // the next passage: a new column, knowing what came before; the first one stays as it was
     const nav = () => document.querySelector(`.column[data-thread="${board.openPath[1]}"] .reader-nav`);
     nav().querySelector('[data-act="reader-next"]').click();
-    await waitFor(() => board.openPath[1] && board.openPath[1] !== tid, 20000, 'the next paragraph');
+    await waitFor(() => board.openPath[1] && board.openPath[1] !== tid, 20000, 'the next passage');
     const tid2 = board.openPath[1];
-    assert(board.threads[tid2].anchor.para === t.anchor.para + 1 && board.reader.at === t.anchor.para + 1, 'not the next paragraph');
+    assert(board.threads[tid2].anchor.para === t.anchor.para + 1 && board.reader.at === t.anchor.para + 1, 'not the next passage');
     const second = sent[sent.length - 1].messages;
-    assert(second[second.length - 1].content.includes('The paragraph before it'), 'the next paragraph does not know the one before');
-    const p2 = ps[t.anchor.para + 1];
-    if (p2.parts.length > 1) {
-      // a paragraph over a page break is read whole, and marked on both pages
-      assert(second[second.length - 1].content.includes(p2.parts[1].text.slice(-60)) && second[second.length - 1].content.includes('over the page break'),
-        'only the first page of the paragraph was sent');
-      assert((board.threads[tid2].anchor.parts || []).length === p2.parts.length, 'the paragraph\'s anchor has no piece on the next page');
-      await sleep(400);
-      assert(hl('ee-anchor-active') === null || hl('ee-anchor-active') >= 2, 'the paragraph is not highlighted on both pages: ' + hl('ee-anchor-active'));
-    }
+    assert(second[second.length - 1].content.includes('The passage before it'), 'the next passage does not know the one before');
     await idle();
     const len2 = answerOk(lastCard(tid2));
-    assert(hl('ee-read') !== 0, 'the paragraph read before is not marked on the paper');
-    // back: the paragraph already read opens as it is, nothing is asked again
+    assert(hl('ee-read') !== 0, 'the passage read before is not marked on the paper');
+    // back: the passage already read opens as it is, nothing is asked again
     const asked = sent.length;
     nav().querySelector('[data-act="reader-prev"]').click();
-    await waitFor(() => board.openPath[1] === tid, 10000, 'the previous paragraph');
+    await waitFor(() => board.openPath[1] === tid, 10000, 'the previous passage');
     await sleep(500);
     assert(sent.length === asked && board.threads[tid].cards.length === 4, 'going back asked the model again');
+    // skip the section it is in: on to the next section's first passage (read already, so nothing is asked)
+    nav().querySelector('[data-act="reader-skip"]').click();
+    await waitFor(() => board.openPath[1] === tid2, 10000, 'the next section');
+    assert((board.reader.skip || []).includes(q0.head) && sent.length === asked, 'skipping the section did not move on: ' + JSON.stringify(board.reader));
+    // and previous now passes over it: there is nothing before
+    nav().querySelector('[data-act="reader-prev"]').click();
+    await sleep(800);
+    assert(board.openPath[1] === tid2 && sent.length === asked, 'previous went into a skipped section');
+    // the sections list: every section, the skipped one ticked; unticking brings it back
+    document.querySelector('.paper-bar [data-act="reader-sections"]').click();
+    await waitFor(() => document.querySelectorAll('.sections-list .section-row').length > 0, 5000, 'the sections list');
+    if (!opts.pdf) assert(document.querySelectorAll('.sections-list .section-row').length === 2, 'the list does not have the two sections');
+    await snap('13b-sections');
+    const box = [...document.querySelectorAll('.sections-list .section-row input[type=checkbox]')].find((x) => x.checked);
+    assert(box, 'the skipped section is not ticked in the list');
+    box.click();
+    assert(!(board.reader.skip || []).includes(q0.head), 'unticking did not bring the section back');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await sleep(1200); // let the save land
     const disk = JSON.parse((await B.call('selftest', { event: 'reload', id: board.id })).board);
-    assert(disk.reader && disk.reader.at === t.anchor.para && disk.threads[tid2] && disk.threads[tid2].anchor.para === t.anchor.para + 1,
+    assert(disk.reader && disk.reader.unit === 'passage' && disk.threads[tid2] && disk.threads[tid2].anchor.para === t.anchor.para + 1,
       'the reading was not saved with the board');
     const tr = EE.model.boardTranscript(board, app.paperOf(board)).lines.join('\n');
-    assert(tr.includes('read together'), 'the summary does not know these paragraphs were read together');
-    return { paragraphs: ps.length, first: len1, second: len2, at: board.reader.at };
+    assert(tr.includes('passage 1 of the paper, read together'), 'the summary does not know these passages were read together');
+    return { paragraphs: ps.length, passages: qs.length, first: len1, second: len2, at: board.reader.at };
   });
 
   // a word that only the confidential board's question has: it must never show up in what other boards or the level-set send

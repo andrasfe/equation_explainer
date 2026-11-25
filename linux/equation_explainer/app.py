@@ -1111,7 +1111,7 @@ class EEApplication(Adw.Application):
             [("New Board", "new-board"), ("Open PDF Paper…", "open-pdf")],
             [("Close Side Question", "close-last"), ("Back to the Original", "close-all"), ("Board Map", "map"), ("Board Summary", "summary"),
              ("Lessons Learned", "lessons"), ("Recap", "recap")],
-            [("Read the Paper Paragraph by Paragraph", "reader"), ("Next Paragraph", "reader-next"), ("Previous Paragraph", "reader-prev")],
+            [("Read the Paper Passage by Passage", "reader"), ("Next Passage", "reader-next"), ("Previous Passage", "reader-prev")],
             [("Insert Matrix…", "matrix"), ("Write on the Board", "focus")],
             [("Level-Set Now", "levelset"), ("Where I Stand & My Notes", "profile")],
             [("Confidential Board (LM Studio Only)", "confidential"), ("Model & Runtime…", "config"), ("Open .env", "open-env"), ("Reveal Boards Folder", "reveal-boards")],

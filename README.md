@@ -29,20 +29,31 @@ You can also **read a PDF paper** on the board and highlight its passages the sa
   - The PDF is copied into the Boards folder (`Boards/papers`), so the board keeps working if the original moves.
     Opening the same file again goes back to its board. The board summary covers the side questions about the paper.
   - Rendering is Mozilla's pdf.js.
-- **Read a paper paragraph by paragraph.** **¶ read** (⇧⌘P), above or under the paper, starts a guided reading.
-  - The model takes one paragraph at a time. It opens to the right and explains the paragraph in more detail and
-    in easier terms: the point first, then each idea unpacked (symbols defined, skipped steps filled in, formulas
-    written out properly), and how it follows from what came before.
-  - Ask about the paragraph in that column for as long as you like, then **next paragraph →** (⌥⌘]) moves on.
-    **← previous** (⌥⌘[) goes back. A paragraph already read opens as it was, without asking again.
-  - The paragraph being read is bracketed on the page; those already read keep a faint wash. Highlighting a
-    passage offers *read on from here*.
+- **Read a paper passage by passage.** **¶ read** (⇧⌘P), above or under the paper, starts a guided reading.
+  - The model takes one passage at a time: a few paragraphs that belong together, about half a column. It opens to
+    the right and explains the passage in more detail and in easier terms: the point first, then each idea
+    unpacked (symbols defined, skipped steps filled in, formulas written out properly), and how it follows from
+    what came before.
+  - Ask about the passage in that column for as long as you like, then **next passage →** (⌥⌘]) moves on.
+    **← previous** (⌥⌘[) goes back. A passage already read opens as it was, without asking again.
+  - The passage being read is bracketed on the page; those already read keep a faint wash. Highlighting
+    something offers *read on from here*.
   - Paragraphs are found from the layout of the PDF's text: blank space, indented first lines, short last lines
     and changes of type size. Headings join the paragraph they open, formulas stay with their paragraph, and
-    running heads and page numbers are left out. A paragraph that runs over a page break is read whole and
-    marked on both pages, also when a figure or table at the top of the next page sits between its two halves.
-  - The place you got to is saved with the board. Each paragraph read counts as a side question, so the summary,
-    the lessons learned and the recap include them.
+    running heads and page numbers are left out. A paragraph that runs over a page break is kept whole, also
+    when a figure or table at the top of the next page sits between its two halves.
+  - Paragraphs are then grouped into passages, cut where the cuts cost least overall. A cut costs more when a
+    passage would be far from about 1,500 characters, when the next paragraph leans on the one before ("This…",
+    "Thus…", "For example…", a lower-case start, or a colon before it), and when the two sides share their
+    vocabulary (the same topic goes on). A section heading is a cheap place to cut. The title block and the
+    references are never mixed in.
+  - Skip what you already know or find trivial. **skip section ⤼** under a passage passes over the rest of its
+    section, and **sections** under the paper lists them all: tick the ones to skip, or jump to one with **read →**.
+    Next and previous pass over skipped sections; a passage you open yourself is read all the same. The title block,
+    acknowledgements and references start out skipped. Theorems, proofs and the like belong to their section.
+  - The place you got to is saved with the board. Each passage read counts as a side question, so the summary,
+    the lessons learned and the recap include them. A board read paragraph by paragraph before keeps those, and
+    picks up at the passage holding the paragraph it had reached.
 - **Confidential boards: LM Studio only.** **🔓** in the top bar (⌥⌘P, or **Board ▸ Confidential Board**) locks
   the board you are on; **🔒 local only** unlocks it again. You can lock a fresh board before its first question.
   - Everything the board asks goes to LM Studio on this computer: explanations, side questions, summary, lessons,
@@ -215,7 +226,7 @@ macOS uses ⌘, Linux uses Ctrl; the tooltips in the app show the right one.
 | level-set now / where you stand and my notes | `⇧⌘L` / `⌥⌘L` | `Ctrl+Shift+L` / `Ctrl+Alt+L` |
 | new board / write on the board | `⌘N` / `⌘L` | `Ctrl+N` / `Ctrl+L` |
 | read a PDF paper | `⌘O` (or drop a PDF on the board) | `Ctrl+O` |
-| read it paragraph by paragraph / next / previous paragraph | `⇧⌘P` / `⌥⌘]` / `⌥⌘[` | `Ctrl+Shift+P` / `Ctrl+Alt+]` / `Ctrl+Alt+[` |
+| read it passage by passage / next / previous passage | `⇧⌘P` / `⌥⌘]` / `⌥⌘[` | `Ctrl+Shift+P` / `Ctrl+Alt+]` / `Ctrl+Alt+[` |
 | confidential board (LM Studio only) on / off | `⌥⌘P` | `Ctrl+Alt+P` |
 | zoom in / out / actual size | `⌘=` / `⌘−` / `⌘0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | write / new line | `Enter` / `Shift+Enter` (`⌘Enter` runs in python mode, saves a note) | same with `Ctrl+Enter` |

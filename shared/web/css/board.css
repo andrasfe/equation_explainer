@@ -773,3 +773,14 @@ body.paper-printed .textLayer span::highlight(ee-read) { background-color: rgba(
 .hero-paper .paper-open { color: var(--blue); border-color: rgba(156,207,238,0.55); flex: none; }
 .hero-paper .muted { font-size: 14px; }
 body.dropping #slate { outline: 3px dashed rgba(156,207,238,0.7); outline-offset: -8px; }
+
+/* ===================================================================== the paper's sections (reader: skip or jump) */
+.sections-list { display: flex; flex-direction: column; gap: 2px; max-height: 60vh; overflow-y: auto; margin: 8px 0; }
+.section-row { display: flex; align-items: center; gap: 10px; padding: 5px 8px; border-radius: 8px; }
+.section-row:hover { background: rgba(255,255,255,0.04); }
+.section-row.here .section-name { color: var(--yellow); }
+.section-row.skipped .section-name, .section-row.skipped .section-meta { opacity: 0.45; text-decoration: line-through; text-decoration-thickness: 1px; }
+.section-skip { display: flex; align-items: center; gap: 4px; flex: none; cursor: pointer; }
+.section-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.section-meta { flex: none; white-space: nowrap; }
+.sections-modal { width: min(680px, 92vw); }

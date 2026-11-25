@@ -767,7 +767,7 @@
       let html = '';
       if (k === 0 && thread.anchor && isPaperCard(thread.anchor.cardId)) {
         const pg = M.pageOf(thread.anchor.cardId);
-        html += `<blockquote class="anchor-quote paper-quote"><span class="paper-page">${pg ? 'p. ' + pg : 'the paper'}</span> ${pg ? esc(thread.anchor.quote) : esc(thread.anchor.llmText)}</blockquote>`;
+        html += `<blockquote class="anchor-quote paper-quote"><span class="paper-page">${pg ? 'p. ' + M.pagesLabel(thread.anchor) : 'the paper'}</span> ${pg ? esc(thread.anchor.quote) : esc(thread.anchor.llmText)}</blockquote>`;
       } else if (k === 0 && thread.anchor) html += `<blockquote class="anchor-quote">${R.markdown(thread.anchor.llmText)}</blockquote>`;
       html += `<div class="q-text">${R.markdown(card.text)}</div>`;
       body.innerHTML = html;
@@ -1057,8 +1057,8 @@
       for (const [cardId, ce] of anchorables(c)) {
         const body = ce.querySelector(BODY);
         if (!body) continue;
-        for (const t of M.branchesOn(b, cardId)) {
-          const r = A.rangeFor(body, t.anchor);
+        for (const { t, a } of M.piecesOn(b, cardId)) {
+          const r = A.rangeFor(body, a);
           if (r) (b.openPath.includes(t.id) ? active : t.anchor.para != null ? read : idle).push(r);
         }
       }
@@ -1154,12 +1154,23 @@
       const tx = tr.left - st.left - 8;
       const ty = tr.top + tr.height / 2 - st.top;
       const vis = pc.body.getBoundingClientRect();
-      const ce = anchorEl(pc, t.anchor.cardId);
-      const range = ce && A.rangeFor(ce.querySelector(BODY), t.anchor);
-      const rects = range ? [...range.getClientRects()].filter((r) => r.width > 1 && r.height > 1) : [];
       const seed = hash(t.id);
       const clipId = 'clip' + i;
       svg += `<clipPath id="${clipId}"><rect x="${vis.left - st.left - 14}" y="${vis.top - st.top}" width="${vis.width + 28}" height="${vis.height}"/></clipPath>`;
+      // each piece of the anchor (one per page for a paragraph over a page break); the link starts at the first in view
+      const boxes = M.pieces(t.anchor).map((a) => {
+        const ce = anchorEl(pc, a.cardId);
+        const range = ce && A.rangeFor(ce.querySelector(BODY), a);
+        return range ? [...range.getClientRects()].filter((r) => r.width > 1 && r.height > 1) : [];
+      }).filter((rs) => rs.length);
+      const inView = (rs) => Math.max(...rs.map((r) => r.bottom)) > vis.top && Math.min(...rs.map((r) => r.top)) < vis.bottom;
+      if (t.anchor.para != null) {
+        for (const rs of boxes.slice(1).filter(inView)) {
+          const l = Math.min(...rs.map((r) => r.left)), top = Math.min(...rs.map((r) => r.top)), bot = Math.max(...rs.map((r) => r.bottom));
+          svg += `<g clip-path="url(#${clipId})"><path class="chalk-loop" d="${roughBracket(l - st.left - 7, top - st.top - 3, bot - st.top + 3, seed + 1)}"/></g>`;
+        }
+      }
+      const rects = boxes.find(inView) || boxes[0] || [];
       let sx, sy, dashed = false;
       if (rects.length) {
         const l = Math.min(...rects.map((r) => r.left)), r = Math.max(...rects.map((r) => r.right));
@@ -1260,9 +1271,9 @@
     if (!body) return null;
     const cardId = body.closest('[data-card]').dataset.card;
     // a passage highlighted inside a paragraph being read wins over the paragraph
-    const ts = M.branchesOn(S.board, cardId).sort((a, b) => (a.anchor.para != null) - (b.anchor.para != null));
-    for (const t of ts) {
-      const r = A.rangeFor(body, t.anchor);
+    const ps = M.piecesOn(S.board, cardId).sort((x, y) => (x.t.anchor.para != null) - (y.t.anchor.para != null));
+    for (const { t, a } of ps) {
+      const r = A.rangeFor(body, a);
       if (r && r.isPointInRange(pos.startContainer, pos.startOffset)) return t.id;
     }
     return null;
@@ -2389,7 +2400,7 @@
     const pg = c.pdf.pages.get('pdf:' + n);
     if (!pg) return;
     const body = pg.querySelector('.pdf-text');
-    const r = body && A.rangeFor(body, t.anchor);
+    const r = body && A.rangeFor(body, M.pieces(t.anchor)[0]);
     const box = r && r.getBoundingClientRect();
     const hr = c.body.getBoundingClientRect();
     if (box && box.height) {
@@ -2475,6 +2486,8 @@
     const before = prev ? (prev.text.length > 700 ? '…' + prev.text.slice(-700) : prev.text) : '';
     const anchor = { cardId: 'pdf:' + p.page, start: p.start, end: p.end, quote: p.text, llmText: p.text, partial: [], context: '',
       page: p.page, para: i, of: ps.length, head: p.head || '', before };
+    // over a page break: one piece per page, so each page highlights its part; quote and llmText are the whole paragraph
+    if (p.parts && p.parts.length > 1) anchor.parts = p.parts.map((x) => ({ cardId: 'pdf:' + x.page, start: x.start, end: x.end, quote: x.text }));
     t = M.newThread(b, 'root', anchor, `Paragraph ${i + 1}`);
     t.cards.push({ id: uid('c'), role: 'user', text: READ_Q, mode: 'explain', createdAt: Date.now() });
     b.openPath = ['root', t.id];
@@ -2516,7 +2529,7 @@
     hidePopover();
     let ps;
     try { ps = await P.paragraphs(b.pdf.file); } catch (e) { toast('Could not find the paragraphs of this paper: ' + e.message, 'error'); return; }
-    let i = ps.findIndex((p) => p.page === n && anchor.start < p.end && anchor.end > p.start);
+    let i = ps.findIndex((p) => (p.parts || [p]).some((x) => x.page === n && anchor.start < x.end && anchor.end > x.start));
     if (i < 0) i = ps.findIndex((p) => p.page >= n);
     if (i < 0) { toast('No paragraph found there.'); return; }
     readPara(i);
@@ -2558,7 +2571,7 @@
     nav._sig = sig;
     const last = n && i >= n - 1;
     nav.replaceChildren(
-      el('span', { class: 'reader-pos muted' }, `¶ ${i + 1}${n ? ` of ${n}` : ''} · p. ${t.anchor.page || M.pageOf(t.anchor.cardId)}`),
+      el('span', { class: 'reader-pos muted' }, `¶ ${i + 1}${n ? ` of ${n}` : ''} · p. ${M.pagesLabel(t.anchor) || t.anchor.page}`),
       el('span', { class: 'spacer' }),
       el('button', { class: 'chalk-btn small', 'data-act': 'reader-prev', title: kbd('Previous paragraph (⌥⌘[)'), disabled: i === 0 || undefined }, '← previous'),
       el('button', { class: 'chalk-btn small' + (busy ? '' : ' primary'), 'data-act': 'reader-next', title: kbd('Next paragraph (⌥⌘])'), disabled: last || undefined },

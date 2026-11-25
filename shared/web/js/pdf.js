@@ -121,10 +121,13 @@ EE.pdf = (() => {
   const HEADING = /^((\d+(\.\d+)*\.?|[IVX]+\.|[A-Z]\.)\s+[A-Z][a-z]|(abstract|introduction|background|preliminaries|related work|methods?|results|discussion|conclusions?|summary|outlook|acknowledg(e)?ments?|references|bibliography|appendix)\b)/i;
   const BACK = /^(\d+\.?\s+)?(references|bibliography)\b/i;
   const ENDS = /[.!?:]["'’”)\]]*$/;
+  const FLOAT = /^(Table|Fig(ure)?\.?|Algorithm|Listing)\s*[\dIVX]/; // a caption: a figure or table set into the text
+  const STARTS = /^((\d+|[ivx]+|[a-h])[.)]\s+[A-Z]|(Theorem|Lemma|Proof|Definition|Corollary|Proposition|Remark|Example|Claim)\b)/; // never a continuation
 
-  /** The paper split into paragraphs in reading order: [{page, start, end, text, head, back}]. start/end are offsets into
-   *  the visible text of the page's text layer, so a paragraph anchors and highlights exactly like a selection; head is the
-   *  section heading it falls under, back is true from the references on. A paragraph does not cross a page. */
+  /** The paper split into paragraphs in reading order: [{page, start, end, text, head, back, parts}]. A paragraph that runs
+   *  over a page break has one part per page, [{page, start, end, text}]; page/start/end are its first part's. start/end are
+   *  offsets into the visible text of the page's text layer, so a part anchors and highlights exactly like a selection;
+   *  text is the whole paragraph, head the section heading it falls under, back is true from the references on. */
   function paragraphs(file) {
     if (!paras.has(file)) {
       const p = open(file).then(async ({ m, doc, sizes }) => {
@@ -193,7 +196,8 @@ EE.pdf = (() => {
    *  headings join the paragraph they open, and scraps (a formula, a caption line) join their neighbour. */
   function segment(pages, fulls) {
     const out = [];
-    let head = '', back = false;
+    const all = []; // every page's paragraphs in order, before they are joined over page breaks
+    let head = '', back = false, indents = 0;
     // a line that comes back at the top or foot of many pages (a running head, a journal footer) is not the paper's text
     const key = (l) => l.text.replace(/\d+/g, '#').toLowerCase();
     const seen = new Map();
@@ -202,6 +206,12 @@ EE.pdf = (() => {
     pages = pages.map((lines) => lines.filter((l) => !running(l)));
     const letters = (t) => (t.match(/[A-Za-z]/g) || []).length / Math.max(1, t.length);
     const mathy = (t) => letters(t) < 0.45 || /-{5,}/.test(t); // a formula as the PDF's text layer gives it
+    const lead = (b) => b.lines.find((l) => !mathy(l.text)) || b.lines[0];
+    // a figure or table, by its caption (a plot's axis labels may come first)
+    const isFloat = (b) => {
+      const i = b.lines.findIndex((l) => FLOAT.test(l.text));
+      return i >= 0 && b.lines.slice(0, i).every((l) => mathy(l.text) || l.text.length < 40);
+    };
     for (const lines of pages) {
       if (!lines.length) continue;
       const gaps = [];
@@ -220,13 +230,16 @@ EE.pdf = (() => {
         if (p) {
           const gap = p.y - l.y;
           const wide = Math.max(...blk.lines.map((x) => x.x1));
+          const indent = l.x0 - p.x0 > l.size * 0.8 && l.x0 - p.x0 < l.size * 4 && gap > 0;
           brk = gap > step * 1.45 ||                                   // a blank line's worth of space
             gap < -p.size ||                                            // up again: the next column
             Math.abs(l.size - p.size) > Math.max(l.size, p.size) * 0.12 || // a heading, a caption, a footnote
-            (l.x0 - p.x0 > l.size * 0.8 && l.x0 - p.x0 < l.size * 4 && gap > 0) || // an indented first line
+            indent ||                                                   // an indented first line
             (p.x1 < wide - p.size * 2.5 && ENDS.test(p.text) && blk.lines.length > 1); // the short last line of a paragraph
-          // the next column, or after a formula, mid-sentence: still the same paragraph
-          if (brk && !ENDS.test(p.text) && /^[a-z(,;]/.test(l.text) && Math.abs(l.size - p.size) < 0.5) brk = false;
+          if (indent && gap <= step * 1.45) indents++; // this paper marks its paragraphs by indenting them
+          // the next column, or after a formula, mid-sentence: still the same paragraph (not after a table or a figure's labels)
+          const prose = blk.lines.some((x) => !mathy(x.text) && x.text.length >= 40 && !FLOAT.test(x.text));
+          if (brk && !ENDS.test(p.text) && /^[a-z(,;]/.test(l.text) && Math.abs(l.size - p.size) < 0.5 && (prose || !mathy(p.text))) brk = false;
         }
         if (brk) { blk = { lines: [] }; blocks.push(blk); }
         blk.lines.push(l);
@@ -241,38 +254,93 @@ EE.pdf = (() => {
       let pending = null; // a heading (or a formula at the top of the page) waiting for the paragraph it opens
       for (const b of blocks) {
         const t = text(b);
-        if (mathy(t) && !merged.length) { if (pending) pending.lines.push(...b.lines); else pending = { lines: [...b.lines] }; continue; }
+        if (mathy(t) && !merged.length && !isFloat(b)) { if (pending) pending.lines.push(...b.lines); else pending = { lines: [...b.lines] }; continue; }
         if (isHead(b)) {
           if (pending) pending.lines.push(...b.lines); else pending = { lines: [...b.lines] };
+          pending.headed = true;
           head = t.slice(0, 90);
           if (BACK.test(t)) back = true;
           continue;
         }
         const last = merged[merged.length - 1];
         const small = t.length < 160 || mathy(t);
-        if (pending) { b.lines.unshift(...pending.lines); b.head = head; pending = null; merged.push(b); }
-        else if (last && (small || (!ENDS.test(text(last)) && /^[a-z(,;]/.test(t)))) last.lines.push(...b.lines);
+        // a sentence carried on past a figure or table set into it goes back to the paragraph it started in
+        const into = last && isFloat(last) ? merged.slice().reverse().find((x) => !isFloat(x)) : last;
+        if (pending) { b.lines.unshift(...pending.lines); b.head = head; b.headed = !!pending.headed; pending = null; merged.push(b); }
+        else if (into && !ENDS.test(text(into)) && /^[a-z(,;]/.test(t)) into.lines.push(...b.lines);
+        else if (last && small && !(isFloat(last) && /^[a-z(,;]/.test(t))) last.lines.push(...b.lines); // (text running on past a table is not the table's)
         else merged.push(b);
         b.head = b.head || head;
         b.back = back;
       }
       // (a heading left at the foot of a page opens the next page's first paragraph: it stays the current heading)
-      for (const b of merged) {
-        // a block far longer than a paragraph (segmentation found no break): cut at sentence ends, near line ends
-        const chunks = [];
-        let ch = [];
-        let len = 0;
-        for (const l of b.lines) {
-          ch.push(l);
-          len += l.text.length + 1;
-          if (len > 1300 && ENDS.test(l.text)) { chunks.push(ch); ch = []; len = 0; }
+      for (const b of merged) { b.body = body; all.push(b); }
+    }
+
+    // a paragraph that runs over a page break: the next page's first paragraph carries on the last one of the page before
+    const near = (a, b) => Math.abs(a - b) < Math.max(a, b) * 0.12;
+    const own = (b) => b.lines.filter((l) => near(l.size, b.body)); // a footnote under it is left out of the reckoning
+    const tail = (b) => { const o = own(b); return o[o.length - 1]; };
+    const midSentence = (prev, b) => { const l = tail(prev); return !!l && near(lead(b).size, l.size) && !ENDS.test(l.text); };
+    const carriesOn = (prev, b) => {
+      if (b.headed || !!prev.back !== !!b.back || STARTS.test(lead(b).text)) return false;
+      const last = tail(prev);
+      if (!last || !near(lead(b).size, last.size)) return false;
+      // it stops mid-sentence (after a displayed formula, only if the next page goes on in lower case, as on a page)
+      if (!ENDS.test(last.text)) return !mathy(last.text) || /^[a-z(,;]/.test(lead(b).text);
+      // it ends a sentence on a full line, and the next page does not open with an indented line, in a paper that indents
+      const full = last.x1 >= Math.max(...own(prev).map((l) => l.x1)) - last.size * 2.5;
+      const rest = b.lines.slice(1).filter((l) => near(l.size, lead(b).size));
+      const indented = rest.length > 0 && b.lines[0].x0 - Math.min(...rest.map((l) => l.x0)) > lead(b).size * 0.8;
+      return indents >= 2 && full && !indented && !mathy(b.lines[0].text);
+    };
+    const pageOf = (b) => b.lines[b.lines.length - 1].page;
+    const joined = [];
+    for (let i = 0; i < all.length;) {
+      const pg = all[i].lines[0].page;
+      const bl = [];
+      while (i < all.length && all[i].lines[0].page === pg) bl.push(all[i++]);
+      // a figure or table at the top of the page: the text may carry on under it
+      const k = bl.length > 1 && isFloat(bl[0]) ? 1 : 0;
+      const cand = bl[k];
+      const before = joined.slice(-3).filter((b) => pageOf(b) === pg - 1);
+      let into = null;
+      if (cand && before.length && !cand.headed) {
+        const prev = before[before.length - 1];
+        if (carriesOn(prev, cand)) into = prev;
+        // a page that opens mid-sentence finishes a sentence of the page before, even when the PDF put something after it
+        else if (/^[a-z]/.test(lead(cand).text) && !STARTS.test(lead(cand).text)) into = before.slice().reverse().find((b) => midSentence(b, cand) && !!b.back === !!cand.back) || null;
+      }
+      bl.forEach((b, j) => { if (j === k && into) into.lines.push(...b.lines); else joined.push(b); });
+    }
+
+    const piece = (ls) => {
+      const pg = ls[0].page, s = ls[0].s, e = ls[ls.length - 1].e;
+      return { page: pg, start: s, end: e, text: fulls[pg - 1].slice(s, e).replace(/\s+/g, ' ').trim() };
+    };
+    for (const b of joined) {
+      // a block far longer than a paragraph (segmentation found no break): cut at sentence ends, near line ends
+      const chunks = [];
+      let ch = [];
+      let len = 0;
+      for (const l of b.lines) {
+        ch.push(l);
+        len += l.text.length + 1;
+        if (len > 1300 && ENDS.test(l.text)) { chunks.push(ch); ch = []; len = 0; }
+      }
+      if (ch.length) { if (chunks.length && len < 300) chunks[chunks.length - 1].push(...ch); else chunks.push(ch); }
+      for (const c of chunks) {
+        // one part per page, and per run of lines: what lies between (a table the text runs past) is not the paragraph's
+        const parts = [];
+        for (const l of c) {
+          const cur = parts[parts.length - 1];
+          const at = cur && cur[cur.length - 1];
+          if (at && at.page === l.page && l.s >= at.e && l.s - at.e <= 3) cur.push(l); else parts.push([l]);
         }
-        if (ch.length) { if (chunks.length && len < 300) chunks[chunks.length - 1].push(...ch); else chunks.push(ch); }
-        for (const c of chunks) {
-          const s = c[0].s, e = c[c.length - 1].e;
-          const page = c[0].page;
-          out.push({ page, start: s, end: e, text: fulls[page - 1].slice(s, e).replace(/\s+/g, ' ').trim(), head: b.head || head, back: !!b.back });
-        }
+        const ps = parts.map(piece);
+        // a word hyphenated over the page break is joined like one hyphenated over a line break
+        const text = ps.map((x) => x.text).reduce((acc, t) => (acc ? acc + (/-$/.test(acc) ? '' : ' ') + t : t), '');
+        out.push({ page: ps[0].page, start: ps[0].start, end: ps[0].end, text, head: b.head || head, back: !!b.back, parts: ps });
       }
     }
     return out;

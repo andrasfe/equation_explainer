@@ -62,6 +62,14 @@ Stay with this paragraph. The next one comes when the student moves on, so do no
   /** Page number of a paper anchor ("pdf:3" -> 3); null for the whole paper or an answer. */
   const pageOf = (cardId) => { const m = /^pdf:(\d+)$/.exec(cardId || ''); return m ? Number(m[1]) : null; };
   const isPaperAnchor = (a) => !!a && /^pdf(:|$)/.test(a.cardId || '');
+  /** The pieces of an anchor, each on one card or page: a paragraph read over a page break has one per page
+   *  (anchor.parts, each {cardId, start, end, quote}); anything else is its own single piece. */
+  const pieces = (a) => (!a ? [] : a.parts && a.parts.length ? a.parts : [a]);
+  /** The pages an anchor covers, for people: "3" or "3–4". */
+  const pagesLabel = (a) => {
+    const ns = [...new Set(pieces(a).map((x) => pageOf(x.cardId)).filter(Boolean))];
+    return ns.length > 1 ? `${ns[0]}–${ns[ns.length - 1]}` : String(ns[0] || '');
+  };
 
   /** The system-prompt section with the paper's text: around the highlighted page, or from the start for the whole paper. */
   function paperSection(paper, anchor) {
@@ -340,7 +348,7 @@ No code. No preamble and no closing remarks. Stay under about 350 words.`;
       if (card.role === 'user') {
         const q = byCard.get(card.id);
         const pg = t.anchor && pageOf(t.anchor.cardId);
-        const what = q.side && isPaperAnchor(t.anchor) && t.anchor.para != null ? `paragraph ${t.anchor.para + 1} of the paper, read together (p. ${pg}): "${truncate(clean(t.anchor.quote || ''), 160)}"`
+        const what = q.side && isPaperAnchor(t.anchor) && t.anchor.para != null ? `paragraph ${t.anchor.para + 1} of the paper, read together (p. ${pagesLabel(t.anchor) || pg}): "${truncate(clean(t.anchor.quote || ''), 160)}"`
           : q.side && isPaperAnchor(t.anchor) ? (pg ? `question about a passage of the paper (p. ${pg}): "${truncate(clean(t.anchor.quote || ''), 160)}"` : 'question about the whole paper')
           : q.side ? `side question about "${truncate(clean((t.anchor && (t.anchor.llmText || t.anchor.quote)) || ''), 160)}"`
           : !t.parentId && k === 0 ? 'main question' : 'follow-up';
@@ -441,7 +449,7 @@ Be concise: a high-level reference the student can review in a few minutes. No p
         out.push({
           key: c.id, q: c.text, side, answer: body, at: c.createdAt || 0,
           quote: side && t.anchor ? (isPaperAnchor(t.anchor) && !pageOf(t.anchor.cardId) ? 'the whole paper' : t.anchor.quote || '') : '',
-          page: side && t.anchor ? pageOf(t.anchor.cardId) : null,
+          page: side && t.anchor ? (t.anchor.parts ? pagesLabel(t.anchor) : pageOf(t.anchor.cardId)) : null,
           para: side && t.anchor && t.anchor.para != null ? t.anchor.para : null,
         });
       });
@@ -540,6 +548,15 @@ Be concise: a high-level reference the student can review in a few minutes. No p
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
+  /** Every piece of an anchor that lies on this card or page, with its thread: [{t, a}] (a paragraph read over a page
+   *  break shows on both pages). */
+  function piecesOn(board, cardId) {
+    return Object.values(board.threads)
+      .filter((t) => t.anchor)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .flatMap((t) => pieces(t.anchor).filter((a) => a.cardId === cardId).map((a) => ({ t, a })));
+  }
+
   function findCard(board, cardId) {
     for (const t of Object.values(board.threads)) {
       const i = t.cards.findIndex((c) => c.id === cardId);
@@ -567,7 +584,8 @@ Be concise: a high-level reference the student can review in a few minutes. No p
       const n = pageOf(anchor.cardId);
       if (!n) return 'Question about the whole paper:\n\n';
       if (anchor.para != null) {
-        let r = `Paragraph ${anchor.para + 1}${anchor.of ? ` of ${anchor.of}` : ''} of the paper (page ${n}${anchor.head ? `, under "${anchor.head}"` : ''}):\n> ${anchor.llmText.replace(/\n/g, '\n> ')}\n`;
+        const pp = pagesLabel(anchor);
+        let r = `Paragraph ${anchor.para + 1}${anchor.of ? ` of ${anchor.of}` : ''} of the paper (${pp.includes('–') ? `pages ${pp}, over the page break` : `page ${n}`}${anchor.head ? `, under "${anchor.head}"` : ''}):\n> ${anchor.llmText.replace(/\n/g, '\n> ')}\n`;
         if (anchor.before) r += `\n(The paragraph before it, which we have read: "${anchor.before}")\n`;
         return r + '\n';
       }
@@ -656,7 +674,7 @@ Be concise: a high-level reference the student can review in a few minutes. No p
   }
 
   return {
-    newBoard, newThread, pathTo, children, descendants, branchesOn, findCard, countBranches, pageOf, isPaperAnchor, paperSection,
+    newBoard, newThread, pathTo, children, descendants, branchesOn, piecesOn, pieces, pagesLabel, findCard, countBranches, pageOf, isPaperAnchor, paperSection,
     buildMessages, SYSTEM, PAPER_READ, wantsCode, repairJson, recapRule, learnerSection, notesLines, evidence, evidenceHash, levelSetMessages, parseProfile,
     SUMMARY_SYSTEM, boardQuestions, boardTranscript, summaryMessages, RECAP_SYSTEM, recapMessages, LESSONS_SYSTEM, lessonItems, newLessonItems, lessonBatch, lessonsMessages,
   };

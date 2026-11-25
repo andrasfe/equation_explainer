@@ -146,10 +146,13 @@ EE.selfTest = async function selfTest(opts = {}) {
     const pages = [[], []];
     let page = 0, y = 700;
     paras.forEach(([head, lines], k) => {
-      if (k === 2) { page = 1; y = 700; }
       if (k === 0) { pages[0].push({ size: 20, x: 72, y, text: 'Kickback, read slowly' }); y -= 44; }
       if (head) { pages[page].push({ size: 14, x: 72, y, text: head }); y -= 26; }
-      lines.forEach((text) => { pages[page].push({ size: 12, x: 72, y, text }); y -= 15; });
+      lines.forEach((text, j) => {
+        if (k === 1 && j === 2) { page = 1; y = 700; } // the second paragraph runs over the page break, mid-sentence
+        pages[page].push({ size: 12, x: 72, y, text });
+        y -= 15;
+      });
       y -= 22; // the blank line between paragraphs
     });
     return makePdf(pages);
@@ -602,6 +605,8 @@ EE.selfTest = async function selfTest(opts = {}) {
       assert(ps.length === 4, `the test paper has 4 paragraphs, found ${ps.length}: ` + JSON.stringify(ps.map((p) => p.text.slice(0, 40))));
       assert(ps[0].text.startsWith('Kickback, read slowly 1 Phase kickback A controlled-U') && ps[2].page === 2 && ps[3].head === '2 Why it matters',
         'the paragraphs are not the printed ones: ' + JSON.stringify(ps.map((p) => [p.page, p.head, p.text.slice(0, 50)])));
+      assert(ps[1].parts.length === 2 && ps[1].parts[1].page === 2 && /control ends up in the state \(\|0> \+ e/.test(ps[1].text) &&
+        ps[1].text.endsWith('kicked back onto the control register.'), 'the paragraph over the page break was cut: ' + JSON.stringify(ps[1]));
     } else assert(ps.length >= 2, 'no paragraphs found in the paper');
     const start = document.querySelector('.paper-bar [data-act="reader-start"]');
     assert(start, 'no "read it with me" button under the paper');
@@ -637,6 +642,15 @@ EE.selfTest = async function selfTest(opts = {}) {
     assert(board.threads[tid2].anchor.para === t.anchor.para + 1 && board.reader.at === t.anchor.para + 1, 'not the next paragraph');
     const second = sent[sent.length - 1].messages;
     assert(second[second.length - 1].content.includes('The paragraph before it'), 'the next paragraph does not know the one before');
+    const p2 = ps[t.anchor.para + 1];
+    if (p2.parts.length > 1) {
+      // a paragraph over a page break is read whole, and marked on both pages
+      assert(second[second.length - 1].content.includes(p2.parts[1].text.slice(-60)) && second[second.length - 1].content.includes('over the page break'),
+        'only the first page of the paragraph was sent');
+      assert((board.threads[tid2].anchor.parts || []).length === p2.parts.length, 'the paragraph\'s anchor has no piece on the next page');
+      await sleep(400);
+      assert(hl('ee-anchor-active') === null || hl('ee-anchor-active') >= 2, 'the paragraph is not highlighted on both pages: ' + hl('ee-anchor-active'));
+    }
     await idle();
     const len2 = answerOk(lastCard(tid2));
     assert(hl('ee-read') !== 0, 'the paragraph read before is not marked on the paper');

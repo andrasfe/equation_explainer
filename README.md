@@ -39,7 +39,8 @@ You can also **read a PDF paper** on the board and highlight its passages the sa
     passage offers *read on from here*.
   - Paragraphs are found from the layout of the PDF's text: blank space, indented first lines, short last lines
     and changes of type size. Headings join the paragraph they open, formulas stay with their paragraph, and
-    running heads and page numbers are left out.
+    running heads and page numbers are left out. A paragraph that runs over a page break is read whole and
+    marked on both pages, also when a figure or table at the top of the next page sits between its two halves.
   - The place you got to is saved with the board. Each paragraph read counts as a side question, so the summary,
     the lessons learned and the recap include them.
 - **Confidential boards: LM Studio only.** **🔓** in the top bar (⌥⌘P, or **Board ▸ Confidential Board**) locks

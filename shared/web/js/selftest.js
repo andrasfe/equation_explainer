@@ -665,7 +665,8 @@ EE.selfTest = async function selfTest(opts = {}) {
     // skip the section it is in: on to the next section's first passage (read already, so nothing is asked)
     nav().querySelector('[data-act="reader-skip"]').click();
     await waitFor(() => board.openPath[1] === tid2, 10000, 'the next section');
-    assert((board.reader.skip || []).includes(q0.head) && sent.length === asked, 'skipping the section did not move on: ' + JSON.stringify(board.reader));
+    assert((board.reader.skip || []).includes(q0.head), 'skipping the section did not mark it: ' + JSON.stringify(board.reader));
+    assert(sent.length === asked, 'skipping the section asked the model: ' + JSON.stringify(sent.slice(asked).map((x) => ({ purpose: x.purpose, last: String((x.messages[x.messages.length - 1] || {}).content || '').slice(0, 100) }))));
     // and previous now passes over it: there is nothing before
     nav().querySelector('[data-act="reader-prev"]').click();
     await sleep(800);

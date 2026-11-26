@@ -629,6 +629,8 @@
       if (at !== c.root) dom.columns.insertBefore(c.root, at || null);
       updateColumn(c, b.threads[tid], i);
     });
+    for (const c of cols.values()) applyPaneZoom(c);
+    markPane();
     applyHighlights();
     scheduleOverlay();
     renderOutline();
@@ -647,13 +649,14 @@
     const composer = i === 0 && S.board.pdf ? buildPaperBar() : buildComposer(threadId, i === 0);
     root.append(head, body, composer.root);
     body.addEventListener('scroll', scheduleOverlay, { passive: true });
-    return { id: threadId, root, head, body, list, composer, cards: new Map(), headSig: '', tag: null, hero: null };
+    if (i > 0) S.pane = threadId; // the side question just opened is where you are reading
+    return { id: threadId, root, head, body, list, composer, cards: new Map(), headSig: '', tag: null, hero: null, z: null };
   }
 
   function updateColumn(c, thread, i) {
     const b = S.board;
     const kids = M.descendants(b, thread.id).length;
-    const sig = JSON.stringify([i, b.title, thread.title, thread.anchor && thread.anchor.quote, kids, M.countBranches(b), b.pdf && b.pdf.pages, S.paperLook]);
+    const sig = JSON.stringify([i, b.title, thread.title, thread.anchor && thread.anchor.quote, kids, M.countBranches(b), b.pdf && b.pdf.pages, S.paperLook, paneOf(thread.id)]);
     if (sig !== c.headSig) {
       c.headSig = sig;
       c.head.replaceChildren();
@@ -665,6 +668,7 @@
           el('button', { class: 'col-title chalk-title', 'data-act': 'rename-board', title: `Rename board (${b.pdf.name})` }, EE.util.texToText(b.title) || b.pdf.name),
           el('span', { class: 'spacer' }),
           el('span', { class: 'col-meta' }, meta),
+          sizeChip(thread.id),
           el('button', { class: 'icon-btn paper-read', 'data-act': 'reader-start', title: kbd('Read the paper with me, a passage (a few paragraphs that belong together) at a time (⇧⌘P)') }, '¶ read'),
           el('button', { class: 'icon-btn paper-look', 'data-act': 'paper-look', title: S.paperLook === 'chalk' ? 'Show the paper as printed, black on white' : 'Chalk it onto the slate' },
             S.paperLook === 'chalk' ? '☐ paper' : '▨ chalk'));
@@ -673,7 +677,9 @@
         const n = M.countBranches(b);
         c.head.append(
           el('button', { class: 'col-title chalk-title', 'data-act': 'rename-board', title: 'Rename board' }, EE.util.texToText(b.title) || 'A fresh board'),
-          el('span', { class: 'col-meta' }, n ? `${n} side question${n > 1 ? 's' : ''}` : ''));
+          el('span', { class: 'col-meta' }, n ? `${n} side question${n > 1 ? 's' : ''}` : ''),
+          el('span', { class: 'spacer' }),
+          sizeChip(thread.id));
         c.tag = null;
       } else {
         c.tag = el('div', { class: 'branch-tag', title: thread.anchor ? clean(thread.anchor.quote) : '' },
@@ -683,6 +689,7 @@
           c.tag,
           el('span', { class: 'spacer' }),
           el('span', { class: 'col-meta' }, kids ? `${kids} deeper` : ''),
+          sizeChip(thread.id),
           el('button', { class: 'icon-btn', 'data-act': 'delete-thread', 'data-thread': thread.id, title: 'Erase this side question' }, '⌫'),
           el('button', { class: 'icon-btn close-btn', 'data-act': 'close-thread', 'data-thread': thread.id, title: 'Close (Esc) — back to the previous level' }, '✕'));
       }
@@ -1569,33 +1576,136 @@
     return close;
   }
 
-  function openFontPanel() {
-    if (closeDropdown(dom.fontBtn)) return;
-    const cur = currentFont();
-    const faces = el('div', { class: 'pop-faces' }, FONTS.map((f) => el('button', {
-      class: 'pop-face' + (f === cur ? ' on' : ''), style: `font-family: "${f}", cursive`, title: f,
-      onclick: (e) => { setFont(f); [...faces.children].forEach((b) => b.classList.toggle('on', b === e.currentTarget)); },
-    }, f)));
+  // ------------------------------------------------------------ each pane's own text size
+  // A pane (the paper, the original, each side question) has its own size, saved with its thread; one it has not
+  // been given follows the pre-selected default. ⌘= ⌘− ⌘0 and the Aa panel act on the current pane: the one last
+  // clicked or typed in, else the side question opened last. The paper's pages narrow or widen with its size.
+  function paneDefault() {
+    try { const z = Number(localStorage.getItem('ee.paneZoom')); return z >= ZOOM.min && z <= ZOOM.max ? z : 1; } catch (e) { return 1; }
+  }
+  const roundZ = (z) => Math.round(Math.min(ZOOM.max, Math.max(ZOOM.min, z)) * 100) / 100;
+  function paneOf(tid) {
+    const t = S.board && S.board.threads[tid];
+    return t && typeof t.zoom === 'number' ? t.zoom : paneDefault();
+  }
+  function currentPane() {
+    const path = S.board ? S.board.openPath : [];
+    return path.includes(S.pane) ? S.pane : path[path.length - 1];
+  }
+  function markPane() {
+    const cur = currentPane();
+    for (const [tid, c] of cols) c.root.classList.toggle('current', tid === cur);
+  }
+  function selectPane(tid) {
+    if (!tid || S.pane === tid) return;
+    S.pane = tid;
+    markPane();
+  }
+  /** Give a column its pane's size, keeping the same part of it in view. */
+  function applyPaneZoom(c) {
+    const z = paneOf(c.id);
+    if (c.z === z) return;
+    const first = c.z == null;
+    const body = c.body;
+    const at = body.scrollHeight > body.clientHeight ? body.scrollTop / body.scrollHeight : 0;
+    c.z = z;
+    c.root.style.setProperty('--pane-z', String(z));
+    if (c.pdf) c.pdf.refit();
+    if (!first) {
+      body.scrollTop = at * body.scrollHeight;
+      if (body.scrollWidth > body.clientWidth) body.scrollLeft = (body.scrollWidth - body.clientWidth) / 2;
+      scheduleOverlay();
+    }
+  }
+  /** paneZoom('in' | 'out' | 'reset') or paneZoom(null, level): the current pane's text size; 'reset' = the default. */
+  function paneZoom(dir, level, tid = currentPane()) {
+    const b = S.board;
+    const t = b && b.threads[tid];
+    if (!t) return null;
+    const z = roundZ(level != null ? level : dir === 'reset' ? paneDefault() : paneOf(tid) + (dir === 'in' ? 0.1 : -0.1));
+    if (Math.abs(z - paneDefault()) < 0.001) delete t.zoom; else t.zoom = z;
+    S.pane = tid;
+    save(b, true);
+    render();
+    return z;
+  }
+  /** The size panes start at (and every pane not given its own follows). */
+  function setPaneDefault(z) {
+    z = roundZ(z);
+    try { localStorage.setItem('ee.paneZoom', String(z)); } catch (e) { /* ignore */ }
+    const b = S.board;
+    if (b) for (const t of Object.values(b.threads)) if (t.zoom === z) { delete t.zoom; save(b, true); }
+    render();
+    return z;
+  }
+  function paneName(tid) {
+    const b = S.board;
+    const t = b && b.threads[tid];
+    if (!t) return '';
+    if (tid === b.openPath[0]) return b.pdf ? 'the paper' : 'the original';
+    return isReadThread(t) ? 'passage ' + (t.anchor.para + 1) : '“' + truncate(clean(t.anchor ? t.anchor.quote : t.title || ''), 34) + '”';
+  }
+  function sizeChip(tid) {
+    const z = paneOf(tid);
+    if (Math.abs(z - 1) < 0.001) return ''; // (head.append would write a null out as text)
+    return el('button', { class: 'pane-size', 'data-act': 'pane-size', 'data-thread': tid,
+      title: kbd(`Text size of this pane (⌘= ⌘− ⌘0)${Math.abs(z - paneDefault()) < 0.001 ? ', the default for panes' : ''}`) }, Math.round(z * 100) + '%');
+  }
+
+  /** A size row: − slider + value, calling set(level) as the slider moves and nudge(dir) on the buttons. */
+  function sizeRow(label, z0, set, nudge, keys) {
     const value = el('span', { class: 'pop-value' });
-    const slider = el('input', { type: 'range', class: 'pop-slider', min: ZOOM.min, max: ZOOM.max, step: ZOOM.step, value: savedZoom(), 'aria-label': 'Text size' });
+    const slider = el('input', { type: 'range', class: 'pop-slider', min: ZOOM.min, max: ZOOM.max, step: ZOOM.step, value: z0, 'aria-label': label });
     const show = (z) => { value.textContent = Math.round(z * 100) + '%'; };
     show(Number(slider.value));
     let pending = null;
     slider.addEventListener('input', () => {
       show(Number(slider.value));
       clearTimeout(pending);
-      pending = setTimeout(() => zoom(null, Number(slider.value)), 40);
+      pending = setTimeout(() => set(Number(slider.value)), 40);
     });
-    const nudge = (dir) => async () => { const z = await zoom(dir); slider.value = z; show(z); };
-    dropdown(dom.fontBtn, el('div', {},
-      el('div', { class: 'pop-title' }, 'chalk'), faces,
-      el('div', { class: 'pop-title' }, 'text size'),
-      el('div', { class: 'pop-row' },
-        el('button', { class: 'top-btn', title: kbd('Smaller (⌘−)'), onclick: nudge('out') }, '−'),
-        slider,
-        el('button', { class: 'top-btn', title: kbd('Larger (⌘=)'), onclick: nudge('in') }, '+'),
-        value),
-      el('div', { class: 'pop-actions' }, el('button', { class: 'linkish', title: kbd('⌘0'), onclick: nudge('reset') }, 'actual size'))));
+    const go = (dir) => async () => { const z = await nudge(dir); if (z != null) { slider.value = z; show(z); } };
+    const row = el('div', { class: 'pop-row' },
+      el('button', { class: 'top-btn', title: kbd(`Smaller (${keys}−)`), onclick: go('out') }, '−'),
+      slider,
+      el('button', { class: 'top-btn', title: kbd(`Larger (${keys}=)`), onclick: go('in') }, '+'),
+      value);
+    return { row, go, set: (z) => { slider.value = z; show(z); } };
+  }
+
+  function openFontPanel(anchor) {
+    anchor = anchor instanceof Element ? anchor : dom.fontBtn;
+    if (closeDropdown(anchor)) return;
+    const cur = currentFont();
+    const faces = el('div', { class: 'pop-faces' }, FONTS.map((f) => el('button', {
+      class: 'pop-face' + (f === cur ? ' on' : ''), style: `font-family: "${f}", cursive`, title: f,
+      onclick: (e) => { setFont(f); [...faces.children].forEach((b) => b.classList.toggle('on', b === e.currentTarget)); },
+    }, f)));
+    const tid = currentPane();
+    const kids = [el('div', { class: 'pop-title' }, 'chalk'), faces];
+    if (tid) {
+      const pane = sizeRow('Text size of this pane', paneOf(tid), (z) => { paneZoom(null, z, tid); note(); }, (dir) => { const z = paneZoom(dir, null, tid); note(); return z; }, '⌘');
+      const dflt = el('button', { class: 'linkish' });
+      const note = () => {
+        const z = paneOf(tid), d = paneDefault();
+        dflt.textContent = Math.abs(z - d) < 0.001 ? `${Math.round(d * 100)}% is the default for panes` : `make ${Math.round(z * 100)}% the default for panes`;
+        dflt.disabled = Math.abs(z - d) < 0.001;
+      };
+      dflt.onclick = () => { setPaneDefault(paneOf(tid)); note(); };
+      note();
+      kids.push(
+        el('div', { class: 'pop-title' }, 'this pane: ', el('span', { class: 'pop-pane' }, paneName(tid))),
+        pane.row,
+        el('div', { class: 'pop-actions' },
+          el('button', { class: 'linkish', title: kbd('⌘0'), onclick: () => { pane.set(paneZoom('reset', null, tid)); note(); } }, 'default size'),
+          el('span', { class: 'spacer' }), dflt));
+    }
+    const win = sizeRow('Text size of the whole window', savedZoom(), (z) => zoom(null, z), (dir) => zoom(dir), '⌥⌘');
+    kids.push(
+      el('div', { class: 'pop-title' }, 'whole window'),
+      win.row,
+      el('div', { class: 'pop-actions' }, el('button', { class: 'linkish', title: kbd('⌥⌘0'), onclick: async () => win.set(await zoom('reset')) }, 'actual size')));
+    dropdown(anchor, el('div', {}, ...kids));
   }
 
   // the model source for explanations: pick a source and model, saved to .env (level-set and diagrams keep theirs)
@@ -2372,6 +2482,7 @@
     c.root.classList.add('col-paper');
     c.list.hidden = true;
     c.pdf = P.mount(c.body, b.pdf.file, {
+      zoom: () => c.z || 1,
       onReady(info) {
         let changed = false;
         if (b.pdf.pages !== info.doc.numPages) { b.pdf.pages = info.doc.numPages; changed = true; }
@@ -2812,6 +2923,7 @@
       case 'reader-open': readPara(b.reader ? b.reader.at : 0); break;
       case 'reader-stop': if (b.reader) { delete b.reader; save(b); render(); } break;
       case 'paper-look': setPaperLook(S.paperLook === 'chalk' ? 'paper' : 'chalk'); break;
+      case 'pane-size': selectPane(btn.dataset.thread); openFontPanel(btn); break;
       case 'summary-link':
         if (!dom.modal.hidden) { dom.modal.hidden = true; dom.modal.replaceChildren(); } // a link in the recap
         jumpToQuestion(btn.dataset.thread, btn.dataset.qcard);
@@ -2938,6 +3050,20 @@
       if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submitPopover(dom.popInput.value); }
     });
 
+    const paneFrom = (e) => { const col = e.target.closest && e.target.closest('.column'); if (col) selectPane(col.dataset.thread); };
+    dom.columns.addEventListener('pointerdown', paneFrom, true);
+    dom.columns.addEventListener('focusin', paneFrom);
+    if (!B.isNative) {
+      // the apps route ⌘= ⌘− ⌘0 (and ⌥ for the whole window) through their menus; the harness listens itself
+      document.addEventListener('keydown', (e) => {
+        if (!(e.metaKey || e.ctrlKey)) return;
+        const dir = { '=': 'in', '+': 'in', '-': 'out', '0': 'reset' }[e.key] || { Equal: 'in', Minus: 'out', Digit0: 'reset' }[e.code];
+        if (!dir) return;
+        e.preventDefault();
+        if (e.altKey) zoom(dir); else paneZoom(dir);
+      });
+    }
+
     dom.columns.addEventListener('mouseup', (e) => {
       if (e.button !== 0 || e.target.closest('button, textarea, input, select, .composer, summary')) return;
       setTimeout(() => {
@@ -3003,6 +3129,7 @@
         lessons: () => toggleLessons(), recap: () => toggleRecap(), openPdf,
         reader: readerStart, readerNext: () => readerStep(1), readerPrev: () => readerStep(-1),
         confidential: () => toggleConfidential(),
+        paneIn: () => paneZoom('in'), paneOut: () => paneZoom('out'), paneReset: () => paneZoom('reset'),
       };
       if (cmds[name]) cmds[name]();
     },
@@ -3070,7 +3197,7 @@
     drawOverlay, findCardEl, levelSet, showProfile, toggleLearner, learnerContext, evidenceState, submitNote, removeNote,
     toggleSummary, writeSummary, summaryState, toggleLessons, updateLessons, lessonsShown, toggleRecap, writeRecap, recapShown, recapState, jumpToQuestion, drawDiagram, addDiagram, diagramsOn,
     openPaper, importPaperFile, paperOf, revealPaperAnchor, readPara, readerStep, readerStart, readFrom,
-    toggleConfidential, llmOpts, readerSkip, showSections,
+    toggleConfidential, llmOpts, readerSkip, showSections, paneZoom, paneDefault, setPaneDefault, currentPane, selectPane,
   };
   document.addEventListener('DOMContentLoaded', boot);
 })();

@@ -439,7 +439,7 @@ EE.pdf = (() => {
     for (const l of document.querySelectorAll('.textLayer.selecting')) l.classList.remove('selecting');
   });
 
-  /** Mount a paper into a scrolling element. Returns {file, pages, ready, scrollToPage, refit, destroy}. */
+  /** Mount a paper into a scrolling element; opts.zoom() scales the fitted page width. Returns {file, pages, ready, scrollToPage, refit, destroy}. */
   function mount(host, file, opts = {}) {
     const root = el('div', { class: 'pdf-doc' }, el('div', { class: 'pdf-loading chalk-dots' }, 'unrolling the paper'));
     host.append(root);
@@ -478,8 +478,9 @@ EE.pdf = (() => {
     function layout(first = false) {
       if (!st.info || st.dead) return;
       const cs = getComputedStyle(host);
-      const w = Math.floor(host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2);
-      if (w < 120 || (!first && Math.abs(w - st.width) < 2)) return;
+      const fit = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2;
+      const w = Math.floor(fit * (opts.zoom ? opts.zoom() : 1)); // the pane's own size: narrower pages, or wider ones that scroll sideways
+      if (fit < 120 || (!first && Math.abs(w - st.width) < 2)) return;
       st.width = w;
       st.info.sizes.forEach((s, i) => {
         const pg = pages.get('pdf:' + (i + 1));

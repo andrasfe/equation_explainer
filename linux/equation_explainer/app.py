@@ -856,8 +856,9 @@ SHORTCUTS = [  # (accelerator, app action)
     ("<Control><Shift>p", "reader"), ("<Control><Alt>bracketright", "reader-next"), ("<Control><Alt>bracketleft", "reader-prev"),
     ("<Control><Alt>p", "confidential"),
     ("<Control><Alt>m", "matrix"), ("<Control>l", "focus"),
-    ("<Control><Shift>l", "levelset"), ("<Control><Alt>l", "profile"), ("<Control>equal", "zoom-in"), ("<Control>plus", "zoom-in"),
-    ("<Control>minus", "zoom-out"), ("<Control>0", "zoom-reset"), ("<Control>q", "quit"), ("<Control>w", "quit"),
+    ("<Control><Shift>l", "levelset"), ("<Control><Alt>l", "profile"), ("<Control>equal", "pane-in"), ("<Control>plus", "pane-in"),
+    ("<Control>minus", "pane-out"), ("<Control>0", "pane-reset"), ("<Control><Alt>equal", "zoom-in"), ("<Control><Alt>plus", "zoom-in"),
+    ("<Control><Alt>minus", "zoom-out"), ("<Control><Alt>0", "zoom-reset"), ("<Control>q", "quit"), ("<Control>w", "quit"),
 ]
 
 
@@ -1115,7 +1116,8 @@ class EEApplication(Adw.Application):
             [("Insert Matrix…", "matrix"), ("Write on the Board", "focus")],
             [("Level-Set Now", "levelset"), ("Where I Stand & My Notes", "profile")],
             [("Confidential Board (LM Studio Only)", "confidential"), ("Model & Runtime…", "config"), ("Open .env", "open-env"), ("Reveal Boards Folder", "reveal-boards")],
-            [("Zoom In", "zoom-in"), ("Zoom Out", "zoom-out"), ("Actual Size", "zoom-reset")],
+            [("Larger Text in This Pane", "pane-in"), ("Smaller Text in This Pane", "pane-out"), ("Default Size for This Pane", "pane-reset")],
+            [("Zoom Window In", "zoom-in"), ("Zoom Window Out", "zoom-out"), ("Window at Actual Size", "zoom-reset")],
             [("Quit", "quit")],
         ]
         for items in sections:
@@ -1144,7 +1146,7 @@ class EEApplication(Adw.Application):
                            ("matrix", "insertMatrix"), ("focus", "focus"), ("levelset", "levelset"), ("profile", "profile"),
                            ("config", "config"), ("open-pdf", "openPdf"), ("lessons", "lessons"),
                            ("recap", "recap"), ("reader", "reader"), ("reader-next", "readerNext"), ("reader-prev", "readerPrev"),
-                           ("confidential", "confidential")):
+                           ("confidential", "confidential"), ("pane-in", "paneIn"), ("pane-out", "paneOut"), ("pane-reset", "paneReset")):
             act(name, cmd(page))
         act("open-env", lambda: m() and m().open_env())
         act("reveal-boards", lambda: m() and m().reveal_boards_folder())

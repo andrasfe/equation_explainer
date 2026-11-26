@@ -133,11 +133,17 @@ You can also **read a PDF paper** on the board and highlight its passages the sa
     sympy, scipy, matplotlib and the `boardkit` helpers (gates, kets, `kron`, `qft`,
     `grover_diffusion`, `probs`, `show()`).
   - Results render as math, and figures render as images. Failed runs get **fix it ↻**.
-- **Zoom.** Use ⌘= and ⌘−, or pinch. Click ⤢ on any displayed equation for a magnifying lens.
+- **Text size per pane.** The paper, the original and each side question have their own text size. Click in a pane
+  (or type in it) to make it the current one; once there are several, the current pane has a faint line under its
+  header. ⌘= and ⌘− change the current pane only, and ⌘0 sets it back to the default. The paper's pages narrow, or
+  widen and scroll sideways. A pane not at 100% shows its size in its header, and you can click that to adjust it.
+  Panes start at the default size, which is 100% until you change it with **make N% the default for panes** in the
+  **Aa** panel. Each pane's size is saved with the board. ⌥⌘= / ⌥⌘− / ⌥⌘0 (or pinch) zoom the whole window. Click ⤢ on
+  any displayed equation for a magnifying lens.
 - **Chalk look.** Slate texture, a wooden frame and handwritten fonts: on macOS the system faces (Chalkboard SE,
   Chalkduster, Bradley Hand, Noteworthy, Marker Felt), elsewhere OFL faces bundled in `shared/web/fonts` (Patrick
   Hand, Architects Daughter, Gloria Hallelujah, Shadows Into Light, Gochi Hand, Fredericka the Great). **Aa** at the top
-  right picks the face and has a slider for the text size (also ⌘= / ⌘− / ⌘0, Ctrl on Linux).
+  right picks the face and has sliders for the current pane's text size and the whole window's (Ctrl on Linux).
 
 ## Setup
 
@@ -228,7 +234,8 @@ macOS uses ⌘, Linux uses Ctrl; the tooltips in the app show the right one.
 | read a PDF paper | `⌘O` (or drop a PDF on the board) | `Ctrl+O` |
 | read it passage by passage / next / previous passage | `⇧⌘P` / `⌥⌘]` / `⌥⌘[` | `Ctrl+Shift+P` / `Ctrl+Alt+]` / `Ctrl+Alt+[` |
 | confidential board (LM Studio only) on / off | `⌥⌘P` | `Ctrl+Alt+P` |
-| zoom in / out / actual size | `⌘=` / `⌘−` / `⌘0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+| current pane: larger / smaller / default text size | `⌘=` / `⌘−` / `⌘0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+| whole window: zoom in / out / actual size | `⌥⌘=` / `⌥⌘−` / `⌥⌘0` | `Ctrl+Alt+=` / `Ctrl+Alt+-` / `Ctrl+Alt+0` |
 | write / new line | `Enter` / `Shift+Enter` (`⌘Enter` runs in python mode, saves a note) | same with `Ctrl+Enter` |
 
 ## Development

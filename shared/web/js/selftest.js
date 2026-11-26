@@ -3,7 +3,7 @@
  * question → drill deeper → run Python → compute mode → close back to the
  * original → reload from disk → reopen a branch → summarize the board →
  * draw a circuit diagram → read a PDF paper and ask about a highlighted passage → read it passage by passage →
- * a confidential board that only LM Studio answers.
+ * a text size per pane → a confidential board that only LM Studio answers.
  * opts.prompt replaces the first question; opts.pdf (a path) replaces the built-in one-page paper.
  */
 EE.selfTest = async function selfTest(opts = {}) {
@@ -687,6 +687,57 @@ EE.selfTest = async function selfTest(opts = {}) {
     const tr = EE.model.boardTranscript(board, app.paperOf(board)).lines.join('\n');
     assert(tr.includes('passage 1 of the paper, read together'), 'the summary does not know these passages were read together');
     return { paragraphs: ps.length, passages: qs.length, first: len1, second: len2, at: board.reader.at };
+  });
+
+  await step('text size per pane: only the current pane changes, the paper\'s pages follow, saved with the board', async () => {
+    app.closeAll();
+    const r = await B.call('importPdf', { data: tinyPdf(), name: 'selftest-sizes.pdf' });
+    const board = app.openPaper(r);
+    await waitFor(() => document.querySelector('.pdf-page[data-page="1"] .textLayer span'), 60000, 'the paper to render');
+    // a side question written here (no model needed): the sizes are what is under test
+    const now = Date.now();
+    const t = EE.model.newThread(board, 'root', null, 'sizes');
+    t.cards.push({ id: EE.util.uid('c'), role: 'user', text: 'What is phase kickback?', mode: 'explain', createdAt: now },
+      { id: EE.util.uid('c'), role: 'assistant', text: 'The **eigenvalue** of the target ends up as a relative phase $e^{2\\pi i\\varphi}$ on the control.', status: 'done', mode: 'explain', createdAt: now });
+    board.openPath = ['root', t.id];
+    app.render();
+    await settle();
+    const col = (tid) => document.querySelector(`.column[data-thread="${tid}"]`);
+    const fs = (tid) => parseFloat(getComputedStyle(col(tid).querySelector('.card-assistant .card-body')).fontSize);
+    const pageW = () => document.querySelector('.pdf-page[data-page="1"]').getBoundingClientRect().width;
+    assert(app.currentPane() === t.id && col(t.id).classList.contains('current'), 'the side question just opened is not the current pane');
+    const f0 = fs(t.id), w0 = pageW(), d0 = app.paneDefault();
+    // ⌘− on the side question: only it gets smaller
+    EE.native.command({ name: 'paneOut' });
+    EE.native.command({ name: 'paneOut' });
+    await settle();
+    assert(fs(t.id) < f0 * 0.9 && Math.abs(pageW() - w0) < 2, `⌘− changed the wrong pane: text ${f0}→${fs(t.id)}, paper ${w0}→${pageW()}`);
+    assert(col(t.id).querySelector('.pane-size'), 'the smaller pane does not show its size');
+    // click into the paper: it becomes the current pane, and ⌘= widens its pages (they scroll sideways)
+    col('root').querySelector('.col-body').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    assert(app.currentPane() === 'root', 'clicking the paper did not make it the current pane');
+    EE.native.command({ name: 'paneIn' });
+    EE.native.command({ name: 'paneIn' });
+    await settle();
+    const body = col('root').querySelector('.col-body');
+    assert(pageW() > w0 * 1.1 && body.scrollWidth > body.clientWidth, `the paper's pages did not widen: ${w0}→${pageW()}`);
+    assert(fs(t.id) < f0 * 0.9, 'zooming the paper changed the side question');
+    await snap('15-pane-sizes');
+    // the Aa panel shows the current pane, and its size
+    EE.native.command({ name: 'font' });
+    await sleep(300);
+    const panel = document.getElementById('dropdown');
+    const up = Math.round((d0 + 0.2) * 100) / 100, down = Math.round((d0 - 0.2) * 100) / 100; // (the default may not be 100%)
+    assert(/the paper/.test(panel.textContent) && panel.textContent.includes(Math.round(up * 100) + '%'), `the Aa panel does not show the paper at ${up}: ` + panel.textContent);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(1200); // let the save land
+    const disk = JSON.parse((await B.call('selftest', { event: 'reload', id: board.id })).board);
+    assert(disk.threads.root.zoom === up && disk.threads[t.id].zoom === down, 'the sizes were not saved: ' + JSON.stringify([disk.threads.root.zoom, disk.threads[t.id].zoom]));
+    // ⌘0 puts the paper back at the default
+    EE.native.command({ name: 'paneReset' });
+    await settle();
+    assert(Math.abs(pageW() - w0) < 3 && board.threads.root.zoom === undefined, `⌘0 did not bring the paper back: ${w0}→${pageW()}`);
+    return { default: d0, text: [f0, fs(t.id)], page: [Math.round(w0), Math.round(pageW())] };
   });
 
   // a word that only the confidential board's question has: it must never show up in what other boards or the level-set send

@@ -99,9 +99,14 @@ struct BoardCommands: Commands {
             Button("Reveal Boards Folder") { model.revealBoardsFolder() }
         }
         CommandGroup(after: .toolbar) {
-            Button("Zoom In") { model.zoom(.in) }.keyboardShortcut("=", modifiers: .command)
-            Button("Zoom Out") { model.zoom(.out) }.keyboardShortcut("-", modifiers: .command)
-            Button("Actual Size") { model.zoom(.reset) }.keyboardShortcut("0", modifiers: .command)
+            // the pane you are in (the paper, the original or a side question) has its own text size
+            Button("Larger Text in This Pane") { model.web.command("paneIn") }.keyboardShortcut("=", modifiers: .command)
+            Button("Smaller Text in This Pane") { model.web.command("paneOut") }.keyboardShortcut("-", modifiers: .command)
+            Button("Default Size for This Pane") { model.web.command("paneReset") }.keyboardShortcut("0", modifiers: .command)
+            Divider()
+            Button("Zoom Window In") { model.zoom(.in) }.keyboardShortcut("=", modifiers: [.command, .option])
+            Button("Zoom Window Out") { model.zoom(.out) }.keyboardShortcut("-", modifiers: [.command, .option])
+            Button("Window at Actual Size") { model.zoom(.reset) }.keyboardShortcut("0", modifiers: [.command, .option])
             Divider()
         }
     }
